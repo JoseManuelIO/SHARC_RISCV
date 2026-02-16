@@ -1,0 +1,12 @@
+[submodule "PULP/pulp-sdk"]
+	path = PULP/pulp-sdk
+	url = https://github.com/pulp-platform/pulp-sdk.git
+[submodule "PULP/gvsoc"]
+	path = PULP/gvsoc
+	url = https://github.com/pulp-platform/gvsoc.git
+[submodule "PULP/pulp-riscv-gnu-toolchain"]
+	path = PULP/pulp-riscv-gnu-toolchain
+	url = https://github.com/pulp-platform/pulp-riscv-gnu-toolchain.git
+[submodule "sharc_original"]
+	path = sharc_original
+	url = https://github.com/[USUARIO_SHARC]/SHARC.git

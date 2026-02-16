@@ -1,0 +1,25 @@
+FROM sharc:latest
+
+# Copy and apply SHARC patch for native Python execution (no SCARAB for GVSoC)
+COPY SHARCBRIDGE/docker/patch_sharc_for_gvsoc.py /tmp/
+RUN python3 /tmp/patch_sharc_for_gvsoc.py
+
+# Copy GVSoC simulation configuration (modified version)
+COPY SHARCBRIDGE/sharc_patches/acc_example/simulation_configs/gvsoc_test.json \
+     /home/dcuser/examples/acc_example/simulation_configs/gvsoc_test.json
+
+# Copy base config from original SHARC
+COPY sharc_original/examples/acc_example/base_config_gvsoc.json \
+     /home/dcuser/examples/acc_example/base_config.json
+
+# Copy GVSoC wrapper (modified version with TCP + EOF handling)
+COPY SHARCBRIDGE/sharc_patches/acc_example/gvsoc_controller_wrapper_v2.py \
+     /home/dcuser/examples/acc_example/gvsoc_controller_wrapper_v2.py
+
+# Copy controller delegator from original SHARC
+COPY sharc_original/examples/acc_example/controller_delegator.py \
+     /home/dcuser/examples/acc_example/controller_delegator.py
+
+# GVSoC TCP server configuration  
+ENV GVSOC_HOST=172.17.0.1
+ENV GVSOC_PORT=5000

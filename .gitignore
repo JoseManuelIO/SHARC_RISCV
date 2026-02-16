@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.o
+*.a
+*.elf
+*.bin
+*.hex
+*.dump
+*.d
+*.map
+
+# PULP SDK build
+PULP/pulp-sdk/build/
+PULP/pulp-sdk/install/
+PULP/pulp-riscv-gnu-toolchain/build*/
+PULP/pulp-riscv-gnu-toolchain/stamps/
+PULP/gvsoc/build/
+PULP/gvsoc/install/
+
+# SHARC experiment outputs
+/tmp/sharc_experiments/
+experiments/
+*.log
+*.csv
+*.png
+*.json
+plots/
+
+# GVSoC traces
+trace_file.txt
+power_report.csv
+*.vcd
+
+# Docker volumes (if mounted locally)
+docker_volumes/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# Obsolete directories (already moved)
+_obsolete_root/
+riscv_bridge/
+
+# Git submodule internals (keep .gitmodules)
+# (Los submódulos se trackean con commits específicos)
+
+# Compiled MPC binaries (optional - keep if you want to commit them)
+# SHARCBRIDGE/mpc/build/*.elf
+
+# SHARC specific
+*.pkl
+*.pickle
+simulation_data_incremental.json
+experiment_list_data/
+
+# System files
+.cache/
+*.pid
+*.sock
