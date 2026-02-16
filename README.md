@@ -366,7 +366,7 @@ Si usas este código en investigación académica, por favor cita:
 
 ```bibtex
 @misc{sharc_gvsoc_2026,
-  author = {Tu Nombre},
+  author = Jose Manuel Iniesta Ortiz,
   title = {SHARC + GVSoC Integration: Cycle-Accurate MPC Simulation},
   year = {2026},
   publisher = {GitHub},
