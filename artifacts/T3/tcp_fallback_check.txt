@@ -1,0 +1,4 @@
+SHARCBRIDGE/scripts/gvsoc_tcp_server.py:29:SERVER_PORT = 5000
+SHARCBRIDGE/scripts/gvsoc_tcp_server.py:388:def run_server():
+SHARCBRIDGE/sharc_patches/acc_example/gvsoc_controller_wrapper_v2.py:48:class GVSoCTCPClient:
+SHARCBRIDGE/sharc_patches/acc_example/gvsoc_controller_wrapper_v2.py:108:class GVSoCHTTPClient:

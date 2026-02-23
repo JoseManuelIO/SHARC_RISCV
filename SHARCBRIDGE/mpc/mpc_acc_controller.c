@@ -10,6 +10,7 @@
  */
 
 #include <stdint.h>
+#include "qp_solver.h"
 
 // ============================================================================
 // Hardware I/O (PULP platform, memory-mapped peripherals)
@@ -165,12 +166,14 @@ volatile SharedData shared __attribute__((section(".shared_data"))) = {
 #define F_ACCEL_MAX 4880.0f       // N (max acceleration force)
 #define F_BRAKE_MAX 6507.0f       // N (max braking force)
 #define SAMPLE_TIME 0.2f          // s (sample time)
+#define A_BRAKE_EGO 3.2f          // m/s²
+#define A_BRAKE_FRONT 5.0912f     // m/s²
 
 // MPC Parameters
 #define PREDICTION_HORIZON 5      // Prediction horizon steps (5 steps = 1 second @ 0.2s sample)
-#define GRID_SIZE 5               // Grid resolution for initial search
-#define GRADIENT_ITERS 10         // Gradient descent iterations
-#define GRADIENT_STEP 20.0f       // Gradient step size
+#define GRID_SIZE 7               // Grid resolution for initial search
+#define GRADIENT_ITERS 16         // Gradient descent iterations
+#define GRADIENT_STEP 0.08f       // Gradient step size
 
 // ============================================================================
 // Vehicle Dynamics
@@ -210,46 +213,34 @@ static void predict_state(const float *x, const float *u, const float *w,
 static float compute_cost(const float *x, const float *u, const float *u_prev, 
                           const float *w) {
     float cost = 0.0f;
-    
-    // CRITICAL: Penalize simultaneous accel and brake
-    if (u[0] > 10.0f && u[1] > 10.0f) {
-        cost += 1000000.0f * u[0] * u[1];
-    }
-    
-    // PRIORITY 1: Relative velocity (avoid collision)
-    float v_relative = x[2] - w[0];
-    if (v_relative > 0.5f) {
-        cost += 100000.0f * v_relative * v_relative;
-    }
-    
-    // PRIORITY 2: Velocity tracking to desired speed
+
+    // Primary objective: track desired velocity (matches original MPC intent).
     float v_error = x[2] - V_DES;
-    cost += 100.0f * v_error * v_error;
-    
-    // PRIORITY 3: Time-to-collision safety
-    float time_gap = (v_relative > 0.1f) ? (x[1] / (v_relative + 0.01f)) : 100.0f;
-    if (time_gap < 3.0f) {
-        float gap_error = 3.0f - time_gap;
-        cost += 50000.0f * gap_error * gap_error;
-    }
-    
-    // PRIORITY 4: Headway maintenance
-    float d_safe = MAX(D_MIN, 1.0f * x[2]);
-    float h_error = x[1] - d_safe;
-    if (h_error < 0.0f) {
-        cost += 10000.0f * h_error * h_error;
-    } else {
-        cost += 1.0f * h_error * h_error;
-    }
-    
-    // Input effort (low priority)
-    cost += 0.001f * (u[0] * u[0] + u[1] * u[1]);
-    
-    // Control smoothness
+    cost += 10000.0f * v_error * v_error;
+
+    // Input effort and smoothness terms (close to original weight scales).
+    cost += 0.01f * (u[0] * u[0] + u[1] * u[1]);
     float delta_accel = u[0] - u_prev[0];
     float delta_brake = u[1] - u_prev[1];
-    cost += 0.1f * (delta_accel * delta_accel + delta_brake * delta_brake);
-    
+    cost += 1.0f * (delta_accel * delta_accel + delta_brake * delta_brake);
+
+    // Soft safety penalties: minimum headway and terminal safety.
+    if (x[1] < D_MIN) {
+        float h_err = D_MIN - x[1];
+        cost += 60000.0f * h_err * h_err;
+    }
+
+    // Soft version of terminal safety constraint:
+    // h >= d_min + v^2/(2*a_ego) - v_front^2/(2*a_front)
+    float v = MAX(0.0f, x[2]);
+    float vf = MAX(0.0f, w[0]);
+    float h_terminal_min =
+        D_MIN + (v * v) / (2.0f * 3.2f) - (vf * vf) / (2.0f * 5.0912f);
+    if (x[1] < h_terminal_min) {
+        float t_err = h_terminal_min - x[1];
+        cost += 50000.0f * t_err * t_err;
+    }
+
     return cost;
 }
 
@@ -285,107 +276,109 @@ static float evaluate_control_sequence(const float *x0, const float *u,
 
 static void solve_mpc(const float *x, const float *u_prev, const float *w,
                       float *u_best, float *cost_best, int *iters) {
-    *cost_best = 1e9f;
-    u_best[0] = 0.0f;
-    u_best[1] = 0.0f;
-    *iters = 0;
-    
-    // ========================================================================
-    // Stage 1: Grid Search Initialization
-    // ========================================================================
-    
-    float accel_step = F_ACCEL_MAX / (GRID_SIZE - 1);
-    float brake_step = F_BRAKE_MAX / (GRID_SIZE - 1);
-    
-    // Try acceleration options (brake = 0)
-    print("DEBUG_GRID: Testing acceleration options...\n");
-    for (int i = 0; i < GRID_SIZE; i++) {
-        float u[2];
-        u[0] = i * accel_step;
-        u[1] = 0.0f;
-        
-        float cost = evaluate_control_sequence(x, u, u_prev, w);
-        (*iters)++;
-        
-        print("DEBUG_GRID: accel=");
-        print_float(u[0]);
-        print(" cost=");
-        print_float(cost);
-        print("\n");
-        
-        if (cost < *cost_best) {
-            *cost_best = cost;
-            u_best[0] = u[0];
-            u_best[1] = u[1];
-            print("  -> NEW BEST\n");
-        }
-    }
-    
-    // Try braking options (accel = 0)
-    for (int j = 0; j < GRID_SIZE; j++) {
-        float u[2];
-        u[0] = 0.0f;
-        u[1] = j * brake_step;
-        
-        float cost = evaluate_control_sequence(x, u, u_prev, w);
-        (*iters)++;
-        
-        if (cost < *cost_best) {
-            *cost_best = cost;
-            u_best[0] = u[0];
-            u_best[1] = u[1];
-        }
-    }
-    
-    // ========================================================================
-    // Stage 2: Projected Gradient Descent Refinement
-    // ========================================================================
-    
-    float epsilon = 10.0f;  // Finite difference step
-    
-    for (int iter = 0; iter < GRADIENT_ITERS; iter++) {
-        float cost_current = evaluate_control_sequence(x, u_best, u_prev, w);
-        (*iters)++;
-        
-        // Determine which input to refine
-        if (u_best[0] > 0.1f) {
-            // Refine acceleration
-            float u_plus[2] = {MIN(u_best[0] + epsilon, F_ACCEL_MAX), u_best[1]};
-            float cost_plus = evaluate_control_sequence(x, u_plus, u_prev, w);
-            (*iters)++;
-            
-            // Gradient approximation
-            float grad = (cost_plus - cost_current) / epsilon;
-            
-            // Gradient descent step with projection
-            float new_accel = u_best[0] - GRADIENT_STEP * grad;
-            u_best[0] = MAX(0.0f, MIN(new_accel, F_ACCEL_MAX));
-            
-        } else if (u_best[1] > 0.1f) {
-            // Refine braking
-            float u_plus[2] = {u_best[0], MIN(u_best[1] + epsilon, F_BRAKE_MAX)};
-            float cost_plus = evaluate_control_sequence(x, u_plus, u_prev, w);
-            (*iters)++;
-            
-            // Gradient approximation
-            float grad = (cost_plus - cost_current) / epsilon;
-            
-            // Gradient descent step with projection
-            float new_brake = u_best[1] - GRADIENT_STEP * grad;
-            u_best[1] = MAX(0.0f, MIN(new_brake, F_BRAKE_MAX));
-        }
-    }
-    
-    // ========================================================================
-    // Stage 3: Safety Override
-    // ========================================================================
-    
-    if (*cost_best > 1000000.0f && x[2] > w[0] + 1.0f) {
-        // Emergency braking
-        float v_diff = x[2] - w[0];
+    // Lightweight equation-based QP (2 variables: accel/brake at current step).
+    // This preserves the original model weights/physics without bringing LMPC/OSQP stack.
+    const float wy = 10000.0f;   // output_cost_weight
+    const float wu = 0.01f;      // input_cost_weight
+    const float wdu_acc = 1.0f;  // keep accel smoothness close to original
+    const float wdu_br = 0.30f;  // lower brake inertia to avoid late over-braking
+    const float wh = 80.0f;      // mild headway shaping around d_min
+
+    float v = x[2];
+    float h = x[1];
+    float v_front = w[0];
+    float friction = compute_friction(v);
+
+    // v_next = c_v + a*u_acc - a*u_brake
+    float a = SAMPLE_TIME / MASS;
+    float c_v = v - a * friction;
+    float gv[2] = {a, -a};
+    float ev = c_v - V_DES;
+
+    // h_next = c_h + gh_acc*u_acc + gh_brake*u_brake
+    float c_h = h + SAMPLE_TIME * (v_front - c_v);
+    float gh[2] = {-SAMPLE_TIME * a, SAMPLE_TIME * a};
+    float eh = c_h - D_MIN;
+
+    // Build dense 2x2 QP: 0.5*x'Px + q'x
+    float P[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float q[2] = {0.0f, 0.0f};
+
+    // wy * (gv'u + ev)^2
+    P[0] += 2.0f * wy * gv[0] * gv[0];
+    P[1] += 2.0f * wy * gv[0] * gv[1];
+    P[2] += 2.0f * wy * gv[1] * gv[0];
+    P[3] += 2.0f * wy * gv[1] * gv[1];
+    q[0] += 2.0f * wy * ev * gv[0];
+    q[1] += 2.0f * wy * ev * gv[1];
+
+    // wh * (gh'u + eh)^2
+    P[0] += 2.0f * wh * gh[0] * gh[0];
+    P[1] += 2.0f * wh * gh[0] * gh[1];
+    P[2] += 2.0f * wh * gh[1] * gh[0];
+    P[3] += 2.0f * wh * gh[1] * gh[1];
+    q[0] += 2.0f * wh * eh * gh[0];
+    q[1] += 2.0f * wh * eh * gh[1];
+
+    // wu * ||u||^2 + split delta-input smoothing per channel.
+    P[0] += 2.0f * (wu + wdu_acc);
+    P[3] += 2.0f * (wu + wdu_br);
+    q[0] += -2.0f * wdu_acc * u_prev[0];
+    q[1] += -2.0f * wdu_br * u_prev[1];
+
+    float l[2] = {0.0f, 0.0f};
+    float u[2] = {F_ACCEL_MAX, F_BRAKE_MAX};
+    float sol[2] = {
+        MAX(0.0f, MIN(u_prev[0], F_ACCEL_MAX)),
+        MAX(0.0f, MIN(u_prev[1], F_BRAKE_MAX))
+    };
+
+    QPSettings settings;
+    settings.max_iter = 60;
+    settings.tol = 1e-3f;
+    settings.alpha = 0.05f;
+    settings.verbose = 0;
+
+    QPInfo info;
+    int rc = qp_solve(P, q, l, u, sol, 2, &settings, &info);
+    if (rc == 0) {
+        u_best[0] = sol[0];
+        u_best[1] = sol[1];
+        *cost_best = info.obj_val;
+        *iters = info.iterations;
+    } else {
+        // Conservative fallback if QP fails.
         u_best[0] = 0.0f;
-        u_best[1] = MAX(500.0f, MIN(3000.0f, 800.0f * v_diff));
-        *cost_best = 999.0f;
+        u_best[1] = MAX(0.0f, MIN(u_prev[1], F_BRAKE_MAX));
+        *cost_best = 0.0f;
+        *iters = 0;
+    }
+
+    // Terminal-style safety guard based on original constraint structure.
+    float lhs = h - v * (V_MAX / (2.0f * A_BRAKE_EGO));
+    float v_front_end = MAX(0.0f, v_front - PREDICTION_HORIZON * SAMPLE_TIME * A_BRAKE_FRONT);
+    float rhs = D_MIN - (v_front_end * v_front_end) / (2.0f * A_BRAKE_FRONT);
+    if (lhs < rhs && v > v_front + 1.0f) {
+        float v_diff = v - v_front;
+        u_best[1] = MAX(u_best[1], MIN(F_BRAKE_MAX, 700.0f * v_diff));
+        u_best[0] = 0.0f;
+    }
+
+    // Closing-speed guard: if ego is still significantly faster than lead car
+    // and headway is in a moderate band, enforce a minimum brake level to
+    // reduce under-braking in the mid-window (2s..5s).
+    if (h < (D_MIN + 45.0f) && v > (v_front + 1.8f)) {
+        float v_diff = v - v_front;
+        float brake_floor = MIN(F_BRAKE_MAX, 320.0f * v_diff);
+        u_best[1] = MAX(u_best[1], brake_floor);
+    }
+
+    // Safe-region release: when headway is high and ego is not closing in,
+    // cap brake with a speed-shaped profile to avoid persistent late over-braking.
+    if (h > (D_MIN + 18.0f) && v <= (v_front + 0.5f)) {
+        float brake_cap = 900.0f + 250.0f * MAX(0.0f, v - 8.0f);
+        brake_cap = MIN(brake_cap, 2400.0f);
+        u_best[1] = MIN(u_best[1], brake_cap);
     }
 }
 
@@ -430,8 +423,10 @@ int main(void) {
     w[0] = shared.input_w[0];
     w[1] = shared.input_w[1];
     
-    // Previous control (assume zero for first iteration)
-    float u_prev[2] = {0.0f, 0.0f};
+    // Previous control (read from shared memory, patched by GVSoC server)
+    float u_prev[2];
+    u_prev[0] = shared.input_u_prev[0];
+    u_prev[1] = shared.input_u_prev[1];
     
     // Solve MPC
     float u_best[2];

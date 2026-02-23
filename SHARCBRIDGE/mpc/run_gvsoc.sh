@@ -14,7 +14,7 @@ cd "$PULP_SDK_HOME"
 source configs/pulp-open.sh
 
 # Volver al directorio de la aplicación
-APP_DIR="$HOME/Repositorios/SHARC_RISCV/riscv_bridge/applications/mpc_acc"
+APP_DIR="$HOME/Repositorios/SHARC_RISCV/SHARCBRIDGE/mpc"
 cd "$APP_DIR"
 
 # Ejecutar en GVSOC

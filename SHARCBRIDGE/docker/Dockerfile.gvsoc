@@ -1,5 +1,9 @@
 FROM sharc:latest
 
+# Use repo version of SHARC core module (includes gvsoc delay provider)
+COPY --chown=dcuser:dcuser sharc_original/resources/sharc/__init__.py /home/dcuser/resources/sharc/__init__.py
+COPY --chown=dcuser:dcuser sharc_original/resources/sharc/utils.py /home/dcuser/resources/sharc/utils.py
+
 # Copy and apply SHARC patch for native Python execution (no SCARAB for GVSoC)
 COPY SHARCBRIDGE/docker/patch_sharc_for_gvsoc.py /tmp/
 RUN python3 /tmp/patch_sharc_for_gvsoc.py

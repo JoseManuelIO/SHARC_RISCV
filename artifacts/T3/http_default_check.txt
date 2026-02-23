@@ -1,0 +1,1 @@
+43:GVSOC_TRANSPORT = os.environ.get('GVSOC_TRANSPORT', 'http')

@@ -265,11 +265,12 @@ def run_gvsoc_mpc(k: int, t: float, x: list, w: list, u_prev: list = None) -> di
     cycles = 0
     status = "UNKNOWN"
     
-    u_match = re.search(r'U=([\d.]+),([\d.]+)', output)
+    num = r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?'
+    u_match = re.search(rf'U=({num}),({num})', output)
     if u_match:
         u = [float(u_match.group(1)), float(u_match.group(2))]
     
-    cost_match = re.search(r'COST=([\d.e+\-]+)', output)
+    cost_match = re.search(rf'COST=({num})', output)
     if cost_match:
         cost = float(cost_match.group(1))
     
@@ -355,10 +356,18 @@ def handle_client(conn, addr):
                     x = request.get('x', [0.0, 60.0, 15.0])
                     w = request.get('w', [11.0, 1.0])
                     
+                    # Get u_prev from request, or fall back to internal tracking
+                    request_u_prev = request.get('u_prev', None)
+                    if request_u_prev is not None:
+                        u_prev = request_u_prev
+                        print(f"[Server] Using u_prev from request: {u_prev}", file=sys.stderr)
+                    else:
+                        print(f"[Server] Using tracked u_prev: {u_prev}", file=sys.stderr)
+                    
                     # Execute MPC in GVSoC with u_prev
                     result = run_gvsoc_mpc(k, t, x, w, u_prev)
                     
-                    # Update u_prev for next iteration
+                    # Update u_prev for next iteration (backward compatibility)
                     u_prev = result.get('u', u_prev)
                     
                     # Send response

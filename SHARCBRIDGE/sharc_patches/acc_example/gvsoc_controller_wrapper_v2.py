@@ -35,11 +35,20 @@ T_IN = os.path.join(SIMULATION_DIR, 't_py_to_c++')
 X_IN = os.path.join(SIMULATION_DIR, 'x_py_to_c++')
 W_IN = os.path.join(SIMULATION_DIR, 'w_py_to_c++')
 T_DELAY_IN = os.path.join(SIMULATION_DIR, 't_delay_py_to_c++')
+TRACE_FILE = os.path.join(SIMULATION_DIR, 'wrapper_dynamics_trace.ndjson')
 
 
-# TCP settings
+# Transport settings
+# GVSOC_TRANSPORT=tcp  → raw TCP (default, single-threaded server)
+# GVSOC_TRANSPORT=http → Flask HTTP (concurrent, recommended for parallel batches)
+GVSOC_TRANSPORT = os.environ.get('GVSOC_TRANSPORT', 'http')
 GVSOC_HOST = os.environ.get('GVSOC_HOST', '172.17.0.1')
 GVSOC_PORT = int(os.environ.get('GVSOC_PORT', '5000'))
+GVSOC_BASE_CYCLE_NS = 1.25
+try:
+    GVSOC_CYCLE_NS = float(os.environ.get('GVSOC_CHIP_CYCLE_NS', str(GVSOC_BASE_CYCLE_NS)))
+except ValueError:
+    GVSOC_CYCLE_NS = GVSOC_BASE_CYCLE_NS
 
 
 class GVSoCTCPClient:
@@ -102,6 +111,65 @@ class GVSoCTCPClient:
             print(f"[Wrapper] Connection closed", file=sys.stderr)
 
 
+class GVSoCHTTPClient:
+    """HTTP client for the Flask server (gvsoc_flask_server.py).
+
+    Same public interface as GVSoCTCPClient so main() needs no changes
+    beyond the transport factory.
+    Uses only urllib.request (stdlib) — no extra pip packages inside Docker.
+    """
+
+    def __init__(self, host, port):
+        self.base_url = f'http://{host}:{port}'
+
+    def connect(self):
+        """Verify Flask server is alive (GET /health)."""
+        import urllib.request as _req
+        import urllib.error as _err
+        url = f'{self.base_url}/health'
+        print(f'[Wrapper] Checking Flask server at {url}', file=sys.stderr)
+        for attempt in range(5):
+            try:
+                with _req.urlopen(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        print('[Wrapper] Flask server is ready', file=sys.stderr)
+                        return
+            except _err.URLError as exc:
+                print(f'[Wrapper] Health check attempt {attempt+1}/5 failed: {exc}', file=sys.stderr)
+                if attempt < 4:
+                    time.sleep(2)
+                else:
+                    raise ConnectionError(f'Flask server not reachable at {url}') from exc
+
+    def send_request(self, request_dict):
+        """POST to /mpc/compute, return response dict."""
+        import urllib.request as _req
+        import urllib.error as _err
+        url = f'{self.base_url}/mpc/compute'
+        body = json.dumps(request_dict).encode('utf-8')
+        req = _req.Request(url, data=body,
+                           headers={'Content-Type': 'application/json'},
+                           method='POST')
+        try:
+            with _req.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except _err.HTTPError as exc:
+            raise RuntimeError(f'Flask server returned {exc.code}: {exc.read()}') from exc
+
+    def close(self, send_shutdown=False):
+        """Optionally ask the Flask server to shut down."""
+        if send_shutdown:
+            import urllib.request as _req
+            try:
+                url = f'{self.base_url}/shutdown'
+                req = _req.Request(url, data=b'', method='POST')
+                with _req.urlopen(req, timeout=5):
+                    pass
+            except Exception:
+                pass  # Server may already be down
+        print('[Wrapper] HTTP client closed', file=sys.stderr)
+
+
 class PipeController:
     """Manages pipe I/O following main_controller.cpp protocol."""
     
@@ -153,7 +221,6 @@ class PipeController:
         # If we don't open it for reading, SHARC's open() will block forever
         print("[Wrapper]   Opening t_delay_py_to_c++ (read) - CRITICAL", file=sys.stderr)
         self.t_delay_reader = open(T_DELAY_IN, 'r')
-        
         print("[Wrapper] All pipes opened successfully", file=sys.stderr)
     
     def _read_line(self, reader, name):
@@ -211,7 +278,8 @@ class PipeController:
     
     def write_vector(self, writer, vec, name):
         """Write vector in SHARC format: [val1, val2, ...]\n"""
-        vec_str = '[' + ', '.join(f"{v:.6f}" for v in vec) + ']'
+        # Keep higher precision to minimize avoidable quantization in pipe transport.
+        vec_str = '[' + ', '.join(f"{v:.12g}" for v in vec) + ']'
         writer.write(vec_str + '\n')
         writer.flush()
     
@@ -263,6 +331,19 @@ class PipeController:
         print("[Wrapper] Pipes closed", file=sys.stderr)
 
 
+def append_dynamics_trace(path, record):
+    """Append one JSON line with per-iteration dynamics received from SHARC."""
+    with open(path, 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps(record) + '\n')
+
+
+def scale_cycles_for_delay(raw_cycles, cycle_ns=GVSOC_CYCLE_NS, base_cycle_ns=GVSOC_BASE_CYCLE_NS):
+    """Scale raw GVSoC cycles so SHARC's fixed 1.25ns conversion can emulate cycle_ns."""
+    raw_cycles = int(raw_cycles)
+    scale = cycle_ns / base_cycle_ns
+    return max(0, int(round(raw_cycles * scale)))
+
+
 def main():
     """Main controller loop."""
     print(f"[Wrapper] Starting GVSoC Controller Wrapper", file=sys.stderr)
@@ -270,14 +351,25 @@ def main():
     
     tcp_client = None
     pipe_controller = PipeController()
-    
+
     try:
-        # Connect to GVSoC TCP server
-        tcp_client = GVSoCTCPClient(GVSOC_HOST, GVSOC_PORT)
+        # Connect to GVSoC server — transport chosen by GVSOC_TRANSPORT env var
+        if GVSOC_TRANSPORT == 'http':
+            print(f'[Wrapper] Transport: HTTP (Flask) → {GVSOC_HOST}:{GVSOC_PORT}', file=sys.stderr)
+            tcp_client = GVSoCHTTPClient(GVSOC_HOST, GVSOC_PORT)
+        else:
+            print(f'[Wrapper] Transport: TCP → {GVSOC_HOST}:{GVSOC_PORT}', file=sys.stderr)
+            tcp_client = GVSoCTCPClient(GVSOC_HOST, GVSOC_PORT)
         tcp_client.connect()
         
         # Open pipes (CRITICAL: correct order to avoid deadlock)
         pipe_controller.open_pipes()
+        # Reset trace so each simulation directory keeps only current run records.
+        with open(TRACE_FILE, 'w', encoding='utf-8'):
+            pass
+        
+        # Track previous control (starts at default: no accel, 100N brake)
+        u_prev = [0.0, 100.0]
         
         # Main control loop
         iteration = 0
@@ -295,6 +387,16 @@ def main():
             if status == "FINISHED":
                 print(f"[Wrapper] Status = FINISHED, exiting", file=sys.stderr)
                 break
+
+            # Persist the exact dynamics received from SHARC at this iteration.
+            append_dynamics_trace(TRACE_FILE, {
+                "iteration": iteration,
+                "k": k,
+                "t": t,
+                "x": x,
+                "w": w,
+                "u_prev": u_prev
+            })
             
             # Step 6-7: Compute control via TCP
             request = {
@@ -302,24 +404,48 @@ def main():
                 "k": k,
                 "t": t,
                 "x": x,
-                "w": w
+                "w": w,
+                "u_prev": u_prev
             }
             
             response = tcp_client.send_request(request)
             
             u = response.get('u', [0.0, 100.0])
+            
+            # Update u_prev for next iteration
+            u_prev = u
+            raw_status = response.get('status', 'UNKNOWN')
+            iters = int(response.get('iterations', 0))
+            # Match SHARC original naming where successful solves are reported as SUCCESS.
+            status_norm = 'SUCCESS' if raw_status == 'OPTIMAL' else raw_status
+
+            raw_cycles = int(response.get('cycles', 0))
+            scaled_cycles = scale_cycles_for_delay(raw_cycles)
+
             metadata = {
                 'cost': response.get('cost', 0.0),
-                'iterations': response.get('iterations', 0),
-                'cycles': response.get('cycles', 0),
-                'status': response.get('status', 'UNKNOWN'),
+                'iterations': iters,
+                'cycles': raw_cycles,
+                'scaled_cycles_for_delay': scaled_cycles,
+                'chip_cycle_time_ns_effective': GVSOC_CYCLE_NS,
+                'status': status_norm,
                 't_delay': response.get('t_delay', 0.001),
                 'is_feasible': True,
-                'solver_status': response.get('status', 'UNKNOWN')
+                'solver_status': status_norm,
+                'constraint_error': 0.0,  # Grid search has no explicit constraints
+                'dual_residual': 0.0      # Grid search has no dual variables
             }
             
-            print(f"[Wrapper] Result: u={u}, status={metadata['status']}", file=sys.stderr)
-            
+            # Write cycles to file for GVSoCDelayProvider to read
+            # Escribir con la ruta completa para que SHARC lo encuentre
+            cycles_file = f'gvsoc_cycles_{k}.txt'
+            with open(cycles_file, 'w') as f:
+                f.write(str(scaled_cycles))
+            print(
+                f"[Wrapper] Wrote cycles to {cycles_file} "
+                f"(raw={raw_cycles}, scaled={scaled_cycles}, cycle_ns={GVSOC_CYCLE_NS})",
+                file=sys.stderr,
+            )
             # Step 8-9: Write outputs to SHARC
             pipe_controller.write_vector(pipe_controller.u_writer, u, "u")
             pipe_controller.write_json(pipe_controller.metadata_writer, metadata, "metadata")
