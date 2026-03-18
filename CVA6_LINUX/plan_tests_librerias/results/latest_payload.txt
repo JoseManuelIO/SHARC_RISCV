@@ -1,0 +1,1 @@
+/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/../cva6-sdk/install64/spike_fw_payload.elf

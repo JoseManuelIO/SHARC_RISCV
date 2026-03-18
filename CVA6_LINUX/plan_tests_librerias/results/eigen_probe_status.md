@@ -1,0 +1,17 @@
+# Tarea 2. Eigen Probe
+
+## Estado
+
+`PASS`
+
+## Evidencia
+
+- build log: `/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/results/eigen_probe_build.log`
+- host output: `/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/results/eigen_probe_host.txt`
+- spike log: `/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/results/eigen_probe_spike.log`
+- cva6 output extraido: `/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/results/eigen_probe_cva6.txt`
+- comparacion: `/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/results/eigen_probe_compare.txt`
+
+## Resultado
+
+Eigen compila en host y en CVA6 Linux, ejecuta dentro de Spike y coincide numericamente con host dentro de tolerancia.

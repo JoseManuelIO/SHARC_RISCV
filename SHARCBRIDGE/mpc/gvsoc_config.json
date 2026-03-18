@@ -3793,7 +3793,7 @@
           ]
         },
         "pe0": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -3805,8 +3805,8 @@
           "core_id": 0,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -3827,7 +3827,7 @@
           ]
         },
         "pe1": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -3839,8 +3839,8 @@
           "core_id": 1,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -3861,7 +3861,7 @@
           ]
         },
         "pe2": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -3873,8 +3873,8 @@
           "core_id": 2,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -3895,7 +3895,7 @@
           ]
         },
         "pe3": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -3907,8 +3907,8 @@
           "core_id": 3,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -3929,7 +3929,7 @@
           ]
         },
         "pe4": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -3941,8 +3941,8 @@
           "core_id": 4,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -3963,7 +3963,7 @@
           ]
         },
         "pe5": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -3975,8 +3975,8 @@
           "core_id": 5,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -3997,7 +3997,7 @@
           ]
         },
         "pe6": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -4009,8 +4009,8 @@
           "core_id": 6,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -4031,7 +4031,7 @@
           ]
         },
         "pe7": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -4043,8 +4043,8 @@
           "core_id": 7,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -4065,7 +4065,7 @@
           ]
         },
         "pe8": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -4077,8 +4077,8 @@
           "core_id": 8,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_cluster_198844478_cpp_206841663",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_cluster_11300989_cpp_55322389",
           "ports": [
             "data",
             "data_debug",
@@ -5974,7 +5974,7 @@
         "loader": {
           "vp_component": "utils.loader.loader",
           "binary": [
-            "/tmp/mpc_acc_patched.elf"
+            "/tmp/qp_riscv_patched_w0_461134.elf"
           ],
           "ports": [
             "out",
@@ -6066,7 +6066,7 @@
           ]
         },
         "fc": {
-          "isa": "rv32imfc",
+          "isa": "rv32imfdc",
           "misa": 1073741824,
           "first_external_pcer": 12,
           "riscv_dbg_unit": true,
@@ -6078,8 +6078,8 @@
           "core_id": 0,
           "fetch_enable": false,
           "boot_addr": 0,
-          "has_double": false,
-          "vp_component": "gen_isa_pulp_fc_198844478_cpp_27882433",
+          "has_double": true,
+          "vp_component": "gen_isa_pulp_fc_11300989_cpp_164872946",
           "ports": [
             "fetchen",
             "bootaddr",
@@ -10460,8 +10460,8 @@
     },
     "gvsoc": {
       "proxy": {
-        "enabled": false,
-        "port": 42951
+        "enabled": true,
+        "port": 5850
       },
       "events": {
         "enabled": false,

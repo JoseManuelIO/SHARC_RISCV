@@ -1,0 +1,6 @@
+/usr/bin/sharc_cva6_acc_runtime
+-rwxrwxr-x 1 jminiesta jminiesta 400608 Mar 17 17:29 CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/bin/sharc_cva6_acc_runtime
+
+/usr/share/sharcbridge_cva6
+total 4
+-rw-rw-r-- 1 jminiesta jminiesta 2386 Mar 17 17:29 base_config.json

@@ -4,6 +4,11 @@
 _start:
     # Set up stack pointer
     la sp, _stack_top
+
+    # Enable floating-point state (FS=Dirty) for hard-float ABI (ilp32f/ilp32d)
+    li t2, (3 << 13)
+    csrs mstatus, t2
+    csrwi fcsr, 0
     
     # Clear BSS section
     la t0, _bss_start

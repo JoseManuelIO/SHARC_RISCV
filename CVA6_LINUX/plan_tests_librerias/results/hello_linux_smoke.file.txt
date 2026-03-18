@@ -1,0 +1,1 @@
+/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/results/hello_linux_smoke: ELF 64-bit LSB pie executable, UCB RISC-V, RVC, double-float ABI, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-riscv64-lp64d.so.1, for GNU/Linux 5.10.0, not stripped

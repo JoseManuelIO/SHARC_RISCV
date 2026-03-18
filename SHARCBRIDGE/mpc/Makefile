@@ -3,8 +3,15 @@
 # Solver: Custom QP (Projected Gradient Descent)
 ################################################################################
 
-APP = mpc_acc_controller
+APP ?= mpc_acc_controller
+
+ifeq ($(APP),mpc_acc_controller)
 APP_SRCS = start.S mpc_acc_controller.c qp_solver.c
+else ifeq ($(APP),qp_riscv_runtime)
+APP_SRCS = start.S qp_riscv_runtime.c
+else
+$(error Unsupported APP='$(APP)'. Use mpc_acc_controller or qp_riscv_runtime)
+endif
 
 # Paths
 PULP_SDK_HOME ?= $(HOME)/Repositorios/SHARC_RISCV/PULP/pulp-sdk
@@ -18,7 +25,23 @@ SIZE = $(TOOLCHAIN_DIR)/bin/riscv32-unknown-elf-size
 OBJDUMP = $(TOOLCHAIN_DIR)/bin/riscv32-unknown-elf-objdump
 
 # Compiler flags
-ARCH_FLAGS = -march=rv32imcxpulpv2 -mabi=ilp32
+# Select numeric/ISA profile without changing default behavior.
+# - single: current baseline (rv32imcxpulpv2 + ilp32)
+# - double: enable D extension and hard-float double ABI
+SHARC_NUMERIC_PROFILE ?= single
+
+ifeq ($(SHARC_NUMERIC_PROFILE),double)
+MARCH ?= rv32imfdcxpulpv2
+MABI ?= ilp32d
+USER_DEFINES += -DSHARC_MPC_DOUBLE=1
+else ifeq ($(SHARC_NUMERIC_PROFILE),single)
+MARCH ?= rv32imcxpulpv2
+MABI ?= ilp32
+else
+$(error Unsupported SHARC_NUMERIC_PROFILE='$(SHARC_NUMERIC_PROFILE)'. Use single or double)
+endif
+
+ARCH_FLAGS = -march=$(MARCH) -mabi=$(MABI)
 OPT_FLAGS = -Os -g
 WARN_FLAGS = -Wall -Wextra
 
@@ -28,6 +51,8 @@ DEFINES = \
 	-DCHIP_PULP=1 \
 	-D__PULP__ \
 	-D__RISCV__
+
+USER_DEFINES ?=
 
 INCLUDES = \
 	-I$(CURDIR) \
@@ -41,12 +66,13 @@ INCLUDES = \
 
 LINKER_SCRIPT = $(CURDIR)/riscv.ld
 
-CFLAGS = $(ARCH_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(DEFINES) $(INCLUDES)
+CFLAGS = $(ARCH_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(DEFINES) $(USER_DEFINES) $(INCLUDES)
 LDFLAGS = $(ARCH_FLAGS) -T$(LINKER_SCRIPT) -nostartfiles -Wl,-Map=$(BUILD_DIR)/$(APP).map
 LDLIBS = -lm -lgcc
 
 # Object files
-OBJS = $(BUILD_DIR)/start.o $(BUILD_DIR)/mpc_acc_controller.o $(BUILD_DIR)/qp_solver.o
+OBJS = $(addprefix $(BUILD_DIR)/,$(APP_SRCS:.c=.o))
+OBJS := $(OBJS:.S=.o)
 
 # Targets
 .PHONY: all clean dump info
@@ -65,7 +91,7 @@ $(BUILD_DIR)/$(APP).elf: $(OBJS) $(LINKER_SCRIPT) | $(BUILD_DIR)
 
 $(BUILD_DIR)/start.o: start.S | $(BUILD_DIR)
 	@echo "[AS] $<"
-	@$(CC) $(ARCH_FLAGS) $(DEFINES) -c $< -o $@
+	@$(CC) $(ARCH_FLAGS) $(DEFINES) $(USER_DEFINES) -c $< -o $@
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	@echo "[CC] $<"

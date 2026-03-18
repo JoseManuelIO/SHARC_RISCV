@@ -1,0 +1,6 @@
+snapshot_001.json: k=0 t=0.0
+snapshot_002.json: k=0 t=0.2
+snapshot_003.json: k=1 t=0.2
+snapshot_004.json: k=5 t=1.0
+snapshot_005.json: k=9 t=2.0
+SNAPSHOT_VALIDATE_PASS

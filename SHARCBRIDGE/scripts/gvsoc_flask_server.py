@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-GVSoC Flask HTTP Server - Thread-safe MPC computation service
+GVSoC Flask HTTP Server - Thread-safe MPC computation service.
 
-Advantages over raw TCP server (gvsoc_tcp_server.py):
+Advantages over raw TCP server:
 - Handles N concurrent clients simultaneously (one thread per request)
 - No serial bottleneck: parallel SHARC batches can call /mpc/compute at the same time
 - Easy to debug with curl or a browser
-- TCP server (gvsoc_tcp_server.py) remains untouched for backward compatibility
+- Both HTTP and TCP transports share compute logic from gvsoc_core.py
 
 Usage:
   python3 gvsoc_flask_server.py [--port PORT]
@@ -17,14 +17,13 @@ Usage:
 """
 
 import sys
-import os
 import argparse
 from pathlib import Path
 
-# Re-use all GVSoC logic from TCP server (no code duplication)
+# Re-use shared GVSoC core logic (no code duplication)
 _scripts_dir = Path(__file__).parent
 sys.path.insert(0, str(_scripts_dir))
-from gvsoc_tcp_server import (
+from gvsoc_core import (
     run_gvsoc_mpc,
     validate_environment,
     SERVER_HOST,
@@ -42,7 +41,7 @@ app = Flask(__name__)
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check. Used by run_flask_integration.sh to wait until ready."""
+    """Health check endpoint for legacy HTTP transport."""
     return jsonify({'status': 'ok', 'server': 'gvsoc-flask'}), 200
 
 
@@ -94,6 +93,14 @@ def compute_mpc():
         print(f'[Flask] ERROR in run_gvsoc_mpc: {exc}', file=sys.stderr)
         return jsonify({'error': str(exc)}), 500
 
+    print(
+        f"[Flask] k={k} t={t:.3f} x={x} w={w} -> "
+        f"u={result.get('u')} cost={result.get('cost')} "
+        f"status={result.get('status')} iters={result.get('iterations')} "
+        f"cycles={result.get('cycles')} delay={result.get('t_delay')}",
+        file=sys.stderr,
+    )
+
     return jsonify(result), 200
 
 
@@ -101,7 +108,7 @@ def compute_mpc():
 def shutdown():
     """
     Graceful shutdown endpoint.
-    Called by run_flask_integration.sh after the experiment finishes.
+    Used by legacy HTTP runners after the experiment finishes.
     """
     func = request.environ.get('werkzeug.server.shutdown')
     if func is not None:

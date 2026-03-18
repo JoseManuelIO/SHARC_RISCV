@@ -1,0 +1,9 @@
+LIBMPC_PROBE_OK
+solver_status=1
+status_enum=0
+iterations=75
+cost=300
+cmd0=-0.00125418
+seq_input0=-0.00125418
+seq_state0_0=10
+seq_state0_1=-6.06147e-22

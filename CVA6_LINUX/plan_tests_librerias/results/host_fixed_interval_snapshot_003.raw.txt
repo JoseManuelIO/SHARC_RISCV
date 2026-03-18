@@ -1,0 +1,72 @@
+/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/../../sharc_original/resources/controllers/src/ACC_Controller.cpp:325: Start of ACC_Controller::setOptimizerParameters
+/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/../../sharc_original/resources/controllers/src/ACC_Controller.cpp:348: Start of ACC_Controller::setWeights()
+/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/plan_tests_librerias/../../sharc_original/resources/controllers/src/ACC_Controller.cpp:369: Start of ACC_Controller::setConstraints()
+xmin:
+[0, 6, 0] (Size: 3)
+xmax:
+[inf, inf,  20] (Size: 3)
+umin:
+[0, 0] (Size: 2)
+umax:
+[4.88e+03, 6.51e+03] (Size: 2)
+ymin:
+[0] (Size: 1)
+ymax:
+[20] (Size: 1)
+Bounds are OK.
+worst_case_front_velocity_at_ph=0
+                 constraint_min=6
+        needed headway at v_des=52.875
+v_des: 15
+yRef:
+[15] (Size: 1)
+worst_case_front_velocity_at_ph=7.17237
+                 constraint_min=0.947864
+        needed headway at v_des=47.8229
+[MPC++] [MPC_PROFILE] build=3.147e-06,sparse=2.0951e-05,data_prep=7.486e-06,settings=2.87e-07,setup=0.000138917,warm_start=1.91e-07,solve=0.000174,post=4.45e-06,total=0.000349429
+[MPC++] Optimization step completed
+duration: 0.000367246 (sec)
+status: 0 (opt code: 1)
+feasibility: 1
+status message: 
+cost: -6.74818e+06
+Checking if x satisfies xmin <= x <= xmax for k=1
+Checking if u satisfies umin <= u <= umax for k=1
+control - u_opt_next: 0
+0
+y:
+[14.9] (Size: 1)
+y_err:
+[-0.0599] (Size: 1)
+{
+  "k": 1,
+  "metadata": {
+    "constraint_error": 6.906147909105695e-07,
+    "cost": -6748180.109362921,
+    "dual_residual": 0.00011214989720878119,
+    "is_feasible": true,
+    "iterations": 50,
+    "solver_status": 1,
+    "solver_status_msg": "",
+    "status": "SUCCESS"
+  },
+  "snapshot_id": "snapshot_003",
+  "t": 0.2,
+  "u": [
+    3.723657877427342,
+    90.81217086981752
+  ],
+  "u_prev": [
+    0.131036788225,
+    98.8694534302
+  ],
+  "w": [
+    12.263568379650408,
+    1.0
+  ],
+  "x": [
+    2.994012502581634,
+    59.20598749741837,
+    14.940147527981564
+  ]
+}

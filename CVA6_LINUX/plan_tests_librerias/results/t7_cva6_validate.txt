@@ -1,0 +1,6 @@
+cva6_snapshot_001.json: solver_status=1 iterations=50
+cva6_snapshot_002.json: solver_status=1 iterations=50
+cva6_snapshot_003.json: solver_status=1 iterations=50
+cva6_snapshot_004.json: solver_status=1 iterations=50
+cva6_snapshot_005.json: solver_status=1 iterations=50
+T7_VALIDATE_PASS

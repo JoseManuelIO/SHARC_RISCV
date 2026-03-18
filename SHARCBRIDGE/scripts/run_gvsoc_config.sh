@@ -2,6 +2,7 @@
 # run_gvsoc_config.sh
 #
 # Generic SHARC + GVSoC runner for a single simulation config file.
+# Official transport path: TCP server.
 #
 # Usage:
 #   source venv/bin/activate
@@ -22,23 +23,101 @@ CONFIG_NAME="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARCBRIDGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$SHARCBRIDGE_DIR/.." && pwd)"
+VENV_PY="$REPO_DIR/venv/bin/python3"
+if [ -x "$VENV_PY" ]; then
+  PYTHON_BIN="$VENV_PY"
+else
+  PYTHON_BIN="python3"
+fi
 
-FLASK_SERVER="$SCRIPT_DIR/gvsoc_flask_server.py"
+TCP_SERVER="$SCRIPT_DIR/gvsoc_tcp_server.py"
 WRAPPER_HOST="$SHARCBRIDGE_DIR/sharc_patches/acc_example/gvsoc_controller_wrapper_v2.py"
+BUILD_QP_SCRIPT="$SCRIPT_DIR/build_qp_runtime_profile.sh"
+QP_RUNTIME_ELF="$SHARCBRIDGE_DIR/mpc/build/qp_riscv_runtime.elf"
 
 CONFIG_HOST="$REPO_DIR/sharc_original/examples/acc_example/simulation_configs/$CONFIG_NAME"
 CONFIG_DOCKER="/home/dcuser/examples/acc_example/simulation_configs/$CONFIG_NAME"
 
-FLASK_PORT="${FLASK_PORT:-5000}"
+GVSOC_HOST="${GVSOC_HOST:-127.0.0.1}"
+GVSOC_PORT="${GVSOC_PORT:-5000}"
+GVSOC_BIND_HOST="${GVSOC_BIND_HOST:-0.0.0.0}"
+GVSOC_EXEC_MODE="${GVSOC_EXEC_MODE:-persistent}"
+GVSOC_PERSISTENT_PATH="${GVSOC_PERSISTENT_PATH:-gvsoc_legacy}"
+SHARC_OFFICIAL_RISCV_MODE="${SHARC_OFFICIAL_RISCV_MODE:-1}"
+SHARC_DOUBLE_NATIVE="${SHARC_DOUBLE_NATIVE:-1}"
+GVSOC_QP_SOLVE="${GVSOC_QP_SOLVE:-}"
+GVSOC_QP_PERSISTENT_BACKEND="${GVSOC_QP_PERSISTENT_BACKEND:-}"
+GVSOC_QP_PERSISTENT_EXPERIMENTAL="${GVSOC_QP_PERSISTENT_EXPERIMENTAL:-}"
+GVSOC_QP_PERSISTENT_ALLOW_FALLBACK="${GVSOC_QP_PERSISTENT_ALLOW_FALLBACK:-}"
+
+if [ "$SHARC_OFFICIAL_RISCV_MODE" = "1" ]; then
+  if [ -z "$GVSOC_QP_SOLVE" ]; then
+    GVSOC_QP_SOLVE="1"
+  fi
+  if [ "$GVSOC_QP_SOLVE" != "1" ]; then
+    echo "ERROR: SHARC_OFFICIAL_RISCV_MODE=1 requires GVSOC_QP_SOLVE=1"
+    exit 1
+  fi
+  if [ -z "$GVSOC_QP_PERSISTENT_BACKEND" ]; then
+    GVSOC_QP_PERSISTENT_BACKEND="proxy"
+  fi
+  if [ -z "$GVSOC_QP_PERSISTENT_EXPERIMENTAL" ]; then
+    GVSOC_QP_PERSISTENT_EXPERIMENTAL="1"
+  fi
+  if [ -z "$GVSOC_QP_PERSISTENT_ALLOW_FALLBACK" ]; then
+    GVSOC_QP_PERSISTENT_ALLOW_FALLBACK="0"
+  fi
+fi
+if [ "$SHARC_DOUBLE_NATIVE" = "1" ]; then
+  PULP_SDK_CONFIG="${PULP_SDK_CONFIG:-pulp-open-double.sh}"
+  GVSOC_TARGET="${GVSOC_TARGET:-pulp-open}"
+else
+  PULP_SDK_CONFIG="${PULP_SDK_CONFIG:-pulp-open.sh}"
+  GVSOC_TARGET="${GVSOC_TARGET:-pulp-open}"
+fi
 TIMESTAMP="$(date +%Y-%m-%d--%H-%M-%S)"
 RUN_NAME="${CONFIG_NAME%.json}"
 OUT_DIR="/tmp/sharc_runs/${TIMESTAMP}-${RUN_NAME}"
 
 SHARC_CONTAINER="sharc_run_${RUN_NAME}"
 SHARC_CONTAINER="${SHARC_CONTAINER//[^a-zA-Z0-9_.-]/_}"
-DOCKER_ENV_ARGS=()
+DOCKER_ENV_ARGS=(
+  -e "GVSOC_TRANSPORT=tcp"
+  -e "GVSOC_HOST=${GVSOC_HOST}"
+  -e "GVSOC_PORT=${GVSOC_PORT}"
+  -e "GVSOC_EXEC_MODE=${GVSOC_EXEC_MODE}"
+  -e "GVSOC_PERSISTENT_PATH=${GVSOC_PERSISTENT_PATH}"
+  -e "SHARC_OFFICIAL_RISCV_MODE=${SHARC_OFFICIAL_RISCV_MODE}"
+)
 if [ -n "${GVSOC_CHIP_CYCLE_NS:-}" ]; then
   DOCKER_ENV_ARGS+=(-e "GVSOC_CHIP_CYCLE_NS=${GVSOC_CHIP_CYCLE_NS}")
+fi
+if [ -n "${GVSOC_QP_SOLVE:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "GVSOC_QP_SOLVE=${GVSOC_QP_SOLVE}")
+fi
+if [ -n "${GVSOC_QP_PERSISTENT_BACKEND:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "GVSOC_QP_PERSISTENT_BACKEND=${GVSOC_QP_PERSISTENT_BACKEND}")
+fi
+if [ -n "${GVSOC_QP_PERSISTENT_EXPERIMENTAL:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "GVSOC_QP_PERSISTENT_EXPERIMENTAL=${GVSOC_QP_PERSISTENT_EXPERIMENTAL}")
+fi
+if [ -n "${GVSOC_QP_PERSISTENT_ALLOW_FALLBACK:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "GVSOC_QP_PERSISTENT_ALLOW_FALLBACK=${GVSOC_QP_PERSISTENT_ALLOW_FALLBACK}")
+fi
+for v in OMP_NUM_THREADS OPENBLAS_NUM_THREADS MKL_NUM_THREADS; do
+  if [ -n "${!v:-}" ]; then
+    DOCKER_ENV_ARGS+=(-e "${v}=${!v}")
+  fi
+done
+DOCKER_RUN_ARGS=()
+if [ -n "${SHARC_DOCKER_PRIVILEGED:-}" ]; then
+  DOCKER_RUN_ARGS+=(--privileged)
+fi
+if [ -n "${SHARC_DOCKER_CAP_SYS_ADMIN:-}" ]; then
+  DOCKER_RUN_ARGS+=(--cap-add=SYS_ADMIN)
+fi
+if [ -n "${SHARC_DOCKER_SECCOMP_UNCONFINED:-}" ]; then
+  DOCKER_RUN_ARGS+=(--security-opt seccomp=unconfined)
 fi
 
 GREEN='\033[0;32m'
@@ -47,17 +126,66 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-FLASK_PID=""
-FLASK_OURS=0
+TCP_PID=""
+
+probe_tcp_server() {
+  "$PYTHON_BIN" - "$GVSOC_HOST" "$GVSOC_PORT" <<'PYEOF'
+import json
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+try:
+    with socket.create_connection((host, port), timeout=1.0) as sock:
+        sock.settimeout(1.0)
+        sock.sendall(b"{}\n")
+        data = b""
+        while b"\n" not in data:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+
+    if not data:
+        raise RuntimeError("no response from server")
+
+    msg = json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
+    if msg.get("status") == "ERROR" and msg.get("error_code") == "BAD_REQUEST":
+        sys.exit(0)
+    raise RuntimeError(f"unexpected response: {msg}")
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
+shutdown_tcp_server() {
+  "$PYTHON_BIN" - "$GVSOC_HOST" "$GVSOC_PORT" <<'PYEOF'
+import json
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+try:
+    with socket.create_connection((host, port), timeout=1.0) as sock:
+        sock.settimeout(1.0)
+        sock.sendall((json.dumps({"type": "shutdown"}) + "\n").encode("utf-8"))
+except Exception:
+    pass
+PYEOF
+}
 
 cleanup() {
   local exit_code=$?
   echo -e "\n${YELLOW}[Cleanup] Stopping resources...${NC}"
   docker stop "$SHARC_CONTAINER" 2>/dev/null || true
-  if [ "$FLASK_OURS" -eq 1 ] && [ -n "$FLASK_PID" ] && kill -0 "$FLASK_PID" 2>/dev/null; then
-    curl -sf -X POST "http://localhost:${FLASK_PORT}/shutdown" -o /dev/null 2>/dev/null || true
-    sleep 0.5
-    kill "$FLASK_PID" 2>/dev/null || true
+  if [ -n "$TCP_PID" ] && kill -0 "$TCP_PID" 2>/dev/null; then
+    shutdown_tcp_server || true
+    sleep 0.3
+    kill "$TCP_PID" 2>/dev/null || true
   fi
   if [ $exit_code -eq 0 ]; then
     echo -e "${GREEN}[Cleanup] Done${NC}"
@@ -74,8 +202,28 @@ echo -e "${CYAN}╚════════════════════�
 echo "Config:    $CONFIG_HOST"
 echo "Out dir:   $OUT_DIR"
 echo "Container: $SHARC_CONTAINER"
+echo "Transport: tcp (${GVSOC_HOST}:${GVSOC_PORT})"
+echo "TCP bind:  ${GVSOC_BIND_HOST}:${GVSOC_PORT}"
+echo "Exec mode: ${GVSOC_EXEC_MODE}"
+echo "Path:      ${GVSOC_PERSISTENT_PATH}"
+echo "Official:  ${SHARC_OFFICIAL_RISCV_MODE}"
+echo "Double:    $SHARC_DOUBLE_NATIVE"
+echo "SDK cfg:   $PULP_SDK_CONFIG"
+echo "Target:    $GVSOC_TARGET"
 if [ -n "${GVSOC_CHIP_CYCLE_NS:-}" ]; then
   echo "Cycle ns:  ${GVSOC_CHIP_CYCLE_NS} (from env)"
+fi
+if [ -n "${GVSOC_QP_SOLVE:-}" ]; then
+  echo "QP solve:  ${GVSOC_QP_SOLVE}"
+fi
+if [ -n "${GVSOC_QP_PERSISTENT_BACKEND:-}" ]; then
+  echo "QP back:   ${GVSOC_QP_PERSISTENT_BACKEND}"
+fi
+if [ -n "${GVSOC_QP_PERSISTENT_EXPERIMENTAL:-}" ]; then
+  echo "QP exper:  ${GVSOC_QP_PERSISTENT_EXPERIMENTAL}"
+fi
+if [ -n "${GVSOC_QP_PERSISTENT_ALLOW_FALLBACK:-}" ]; then
+  echo "QP fb:     ${GVSOC_QP_PERSISTENT_ALLOW_FALLBACK}"
 fi
 
 if [ ! -f "$CONFIG_HOST" ]; then
@@ -90,27 +238,55 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-echo -e "\n${YELLOW}[1/7] Ensuring Flask server...${NC}"
-if curl -sf "http://localhost:${FLASK_PORT}/health" -o /dev/null 2>/dev/null; then
-  echo -e "${GREEN}✓ Reusing Flask on port ${FLASK_PORT}${NC}"
+if [ "${GVSOC_QP_SOLVE:-0}" = "1" ]; then
+  echo -e "\n${YELLOW}[0/7] Preparing QP runtime ELF...${NC}"
+  PROFILE="single"
+  if [ "$SHARC_DOUBLE_NATIVE" = "1" ]; then
+    PROFILE="double"
+  fi
+  if [ "${SHARC_SKIP_BUILD:-0}" != "1" ]; then
+    bash "$BUILD_QP_SCRIPT" "$PROFILE"
+  elif [ ! -f "$QP_RUNTIME_ELF" ]; then
+    echo -e "${RED}ERROR: Missing $QP_RUNTIME_ELF and SHARC_SKIP_BUILD=1${NC}"
+    echo -e "${RED}Build it with: bash SHARCBRIDGE/scripts/build_qp_runtime_profile.sh $PROFILE${NC}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓ QP runtime ready: $QP_RUNTIME_ELF${NC}"
+fi
+
+echo -e "\n${YELLOW}[1/7] Ensuring TCP server...${NC}"
+if probe_tcp_server; then
+  echo -e "${GREEN}✓ Reusing TCP server on ${GVSOC_HOST}:${GVSOC_PORT}${NC}"
 else
-  python3 "$FLASK_SERVER" --host 0.0.0.0 --port "$FLASK_PORT" --skip-validation > /tmp/flask_generic.log 2>&1 &
-  FLASK_PID=$!
-  FLASK_OURS=1
-  echo "Flask PID: $FLASK_PID (log: /tmp/flask_generic.log)"
+  echo "Starting TCP server (log: /tmp/tcp_generic.log)"
+  GVSOC_SERVER_HOST="$GVSOC_BIND_HOST" \
+  GVSOC_PORT="$GVSOC_PORT" \
+  GVSOC_EXEC_MODE="$GVSOC_EXEC_MODE" \
+  GVSOC_PERSISTENT_PATH="$GVSOC_PERSISTENT_PATH" \
+  SHARC_OFFICIAL_RISCV_MODE="$SHARC_OFFICIAL_RISCV_MODE" \
+  SHARC_DOUBLE_NATIVE="$SHARC_DOUBLE_NATIVE" \
+  PULP_SDK_CONFIG="$PULP_SDK_CONFIG" \
+  GVSOC_TARGET="$GVSOC_TARGET" \
+  GVSOC_QP_PERSISTENT_BACKEND="$GVSOC_QP_PERSISTENT_BACKEND" \
+  GVSOC_QP_PERSISTENT_EXPERIMENTAL="$GVSOC_QP_PERSISTENT_EXPERIMENTAL" \
+  GVSOC_QP_PERSISTENT_ALLOW_FALLBACK="$GVSOC_QP_PERSISTENT_ALLOW_FALLBACK" \
+  GVSOC_PERSISTENT_WORKERS="${GVSOC_PERSISTENT_WORKERS:-0}" \
+    "$PYTHON_BIN" "$TCP_SERVER" > /tmp/tcp_generic.log 2>&1 &
+  TCP_PID=$!
+  echo "TCP PID: $TCP_PID"
   WAITED=0
-  until curl -sf "http://localhost:${FLASK_PORT}/health" -o /dev/null 2>/dev/null; do
+  until probe_tcp_server; do
     sleep 1
     WAITED=$((WAITED + 1))
     echo -n "."
     if [ $WAITED -ge 20 ]; then
-      echo -e "\n${RED}ERROR: Flask did not start within 20s${NC}"
-      cat /tmp/flask_generic.log || true
+      echo -e "\n${RED}ERROR: TCP server did not start within 20s${NC}"
+      cat /tmp/tcp_generic.log || true
       exit 1
     fi
   done
   echo
-  echo -e "${GREEN}✓ Flask is ready${NC}"
+  echo -e "${GREEN}✓ TCP server is ready${NC}"
 fi
 
 echo -e "\n${YELLOW}[2/7] Cleaning previous container with same name...${NC}"
@@ -121,6 +297,7 @@ echo -e "\n${YELLOW}[3/7] Running SHARC with ${CONFIG_NAME}...${NC}"
 docker run \
   --name "$SHARC_CONTAINER" \
   --network=host \
+  "${DOCKER_RUN_ARGS[@]}" \
   "${DOCKER_ENV_ARGS[@]}" \
   -v "$OUT_DIR:/home/dcuser/examples/acc_example/experiments" \
   -v "$WRAPPER_HOST:/home/dcuser/examples/acc_example/gvsoc_controller_wrapper_v2.py" \
@@ -141,12 +318,30 @@ fi
 echo -e "${GREEN}✓ Output data present${NC}"
 
 echo -e "\n${YELLOW}[5/7] Validating dynamics trace per iteration (k,t,x,w)...${NC}"
-python3 - "$OUT_DIR" <<'PYEOF'
+ "$PYTHON_BIN" - "$OUT_DIR" "$CONFIG_HOST" <<'PYEOF'
 import json
 import os
 import sys
 
 out_dir = sys.argv[1]
+config_path = sys.argv[2]
+
+use_gvsoc = False
+try:
+    with open(config_path, "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    if isinstance(cfg, list):
+        use_gvsoc = any(bool(item.get("use_gvsoc_controller")) for item in cfg if isinstance(item, dict))
+    elif isinstance(cfg, dict):
+        use_gvsoc = bool(cfg.get("use_gvsoc_controller"))
+except Exception as exc:
+    print(f"ERROR: Failed to read config for trace validation: {exc}")
+    sys.exit(1)
+
+if not use_gvsoc:
+    print("Skipping trace validation (use_gvsoc_controller not enabled in config).")
+    sys.exit(0)
+
 trace_files = []
 for root, _, files in os.walk(out_dir):
     if "wrapper_dynamics_trace.ndjson" in files:
@@ -180,7 +375,7 @@ PYEOF
 
 echo -e "\n${YELLOW}[6/7] Generating comparative plot(s)...${NC}"
 mkdir -p "$OUT_DIR/latest"
-OUT_DIR="$OUT_DIR" python3 - <<'PYEOF'
+OUT_DIR="$OUT_DIR" "$PYTHON_BIN" - <<'PYEOF'
 import glob
 import json
 import os

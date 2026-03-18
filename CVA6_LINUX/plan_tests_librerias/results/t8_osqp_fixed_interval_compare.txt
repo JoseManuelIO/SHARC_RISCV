@@ -1,0 +1,10 @@
+snapshot_001.json:u0=4.085621e-14 u1=6.704386e-14 cost=0.000000e+00 iter=0.000000e+00
+snapshot_002.json:u0=6.461498e-13 u1=5.499601e-12 cost=1.862645e-09 iter=0.000000e+00
+snapshot_003.json:u0=3.739231e-13 u1=5.812240e-12 cost=9.313226e-10 iter=0.000000e+00
+snapshot_004.json:u0=4.698464e-13 u1=6.508571e-12 cost=0.000000e+00 iter=0.000000e+00
+snapshot_005.json:u0=2.996408e-09 u1=1.284403e-07 cost=3.725290e-09 iter=0.000000e+00
+MAX_u0=2.996408e-09
+MAX_u1=1.284403e-07
+MAX_cost=3.725290e-09
+MAX_iter=0.000000e+00
+T8_OSQP_FIXED_INTERVAL_PASS

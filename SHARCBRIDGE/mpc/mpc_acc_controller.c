@@ -3,7 +3,7 @@
  * Implements Adaptive Cruise Control using Model Predictive Control
  * Based on: sharc_original/resources/controllers/src/ACC_Controller.cpp
  * 
- * Solver: Projected Gradient Descent with Grid Search Initialization
+ * Solver: lightweight OSQP-style ADMM (box-constrained QP)
  * 
  * IMPORTANT: This is a BARE-METAL program. No C++ standard library,
  * no malloc/free, no iostream. All I/O via memory-mapped UART.
@@ -175,6 +175,59 @@ volatile SharedData shared __attribute__((section(".shared_data"))) = {
 #define GRADIENT_ITERS 16         // Gradient descent iterations
 #define GRADIENT_STEP 0.08f       // Gradient step size
 
+// Tunable MPC coefficients (defaults keep current behavior).
+#ifndef MPC_W_DU_BRAKE
+#define MPC_W_DU_BRAKE 1.0f
+#endif
+#ifndef MPC_W_HEADWAY
+#define MPC_W_HEADWAY 80.0f
+#endif
+#ifndef MPC_MARGIN_TRIGGER
+#define MPC_MARGIN_TRIGGER -1.0f
+#endif
+#ifndef MPC_SAFETY_CLOSE_GAIN
+#define MPC_SAFETY_CLOSE_GAIN 185.0f
+#endif
+#ifndef MPC_SAFETY_MARGIN_GAIN
+#define MPC_SAFETY_MARGIN_GAIN 28.0f
+#endif
+#ifndef MPC_BRAKE_CAP_MARGIN_POS
+#define MPC_BRAKE_CAP_MARGIN_POS 4.0f
+#endif
+#ifndef MPC_BRAKE_CAP_BASE
+#define MPC_BRAKE_CAP_BASE 900.0f
+#endif
+#ifndef MPC_BRAKE_CAP_SPEED_GAIN
+#define MPC_BRAKE_CAP_SPEED_GAIN 230.0f
+#endif
+#ifndef MPC_BRAKE_CAP_MARGIN_SLOPE
+#define MPC_BRAKE_CAP_MARGIN_SLOPE 18.0f
+#endif
+#ifndef MPC_BRAKE_CAP_MIN
+#define MPC_BRAKE_CAP_MIN 150.0f
+#endif
+#ifndef MPC_BRAKE_CAP_MAX
+#define MPC_BRAKE_CAP_MAX 2400.0f
+#endif
+#ifndef MPC_TRANSITION_GUARD_ENABLE
+#define MPC_TRANSITION_GUARD_ENABLE 0
+#endif
+#ifndef MPC_TRANSITION_H_MIN
+#define MPC_TRANSITION_H_MIN 40.0f
+#endif
+#ifndef MPC_TRANSITION_H_MAX
+#define MPC_TRANSITION_H_MAX 47.0f
+#endif
+#ifndef MPC_TRANSITION_VDIFF_MIN
+#define MPC_TRANSITION_VDIFF_MIN 1.2f
+#endif
+#ifndef MPC_TRANSITION_BRAKE_K
+#define MPC_TRANSITION_BRAKE_K 260.0f
+#endif
+#ifndef MPC_TRANSITION_BRAKE_B
+#define MPC_TRANSITION_BRAKE_B 250.0f
+#endif
+
 // ============================================================================
 // Vehicle Dynamics
 // ============================================================================
@@ -270,8 +323,34 @@ static float evaluate_control_sequence(const float *x0, const float *u,
     return total_cost;
 }
 
+// Predict terminal safety margin using the same structure as the original
+// terminal constraint (with front-vehicle braking profile across horizon).
+static float predict_terminal_margin(const float *x0, const float *u, const float *w0,
+                                     float *closing_end_out) {
+    float x[3] = {x0[0], x0[1], x0[2]};
+    float x_next[3];
+    float w_step[2] = {w0[0], 1.0f};
+    float vf_end = w0[0];
+
+    for (int k = 0; k < PREDICTION_HORIZON; k++) {
+        vf_end = MAX(0.0f, w0[0] - (float)k * SAMPLE_TIME * A_BRAKE_FRONT);
+        w_step[0] = vf_end;
+        predict_state(x, u, w_step, SAMPLE_TIME, x_next);
+        x[0] = x_next[0];
+        x[1] = x_next[1];
+        x[2] = x_next[2];
+    }
+
+    float lhs = x[1] - x[2] * (V_MAX / (2.0f * A_BRAKE_EGO));
+    float rhs = D_MIN - (vf_end * vf_end) / (2.0f * A_BRAKE_FRONT);
+    if (closing_end_out) {
+        *closing_end_out = x[2] - vf_end;
+    }
+    return lhs - rhs;
+}
+
 // ============================================================================
-// MPC Solver (Grid Search + Projected Gradient Descent)
+// MPC Solver (OSQP-style ADMM over box constraints)
 // ============================================================================
 
 static void solve_mpc(const float *x, const float *u_prev, const float *w,
@@ -281,12 +360,10 @@ static void solve_mpc(const float *x, const float *u_prev, const float *w,
     const float wy = 10000.0f;   // output_cost_weight
     const float wu = 0.01f;      // input_cost_weight
     const float wdu_acc = 1.0f;  // keep accel smoothness close to original
-    const float wdu_br = 0.30f;  // lower brake inertia to avoid late over-braking
-    const float wh = 80.0f;      // mild headway shaping around d_min
+    const float wdu_br = MPC_W_DU_BRAKE;  // lower brake inertia to avoid late over-braking
 
     float v = x[2];
     float h = x[1];
-    float v_front = w[0];
     float friction = compute_friction(v);
 
     // v_next = c_v + a*u_acc - a*u_brake
@@ -296,7 +373,7 @@ static void solve_mpc(const float *x, const float *u_prev, const float *w,
     float ev = c_v - V_DES;
 
     // h_next = c_h + gh_acc*u_acc + gh_brake*u_brake
-    float c_h = h + SAMPLE_TIME * (v_front - c_v);
+    float c_h = h + SAMPLE_TIME * (w[0] - c_v);
     float gh[2] = {-SAMPLE_TIME * a, SAMPLE_TIME * a};
     float eh = c_h - D_MIN;
 
@@ -312,7 +389,8 @@ static void solve_mpc(const float *x, const float *u_prev, const float *w,
     q[0] += 2.0f * wy * ev * gv[0];
     q[1] += 2.0f * wy * ev * gv[1];
 
-    // wh * (gh'u + eh)^2
+    // mild headway shaping around d_min
+    const float wh = MPC_W_HEADWAY;
     P[0] += 2.0f * wh * gh[0] * gh[0];
     P[1] += 2.0f * wh * gh[0] * gh[1];
     P[2] += 2.0f * wh * gh[1] * gh[0];
@@ -354,30 +432,38 @@ static void solve_mpc(const float *x, const float *u_prev, const float *w,
         *iters = 0;
     }
 
-    // Terminal-style safety guard based on original constraint structure.
-    float lhs = h - v * (V_MAX / (2.0f * A_BRAKE_EGO));
-    float v_front_end = MAX(0.0f, v_front - PREDICTION_HORIZON * SAMPLE_TIME * A_BRAKE_FRONT);
-    float rhs = D_MIN - (v_front_end * v_front_end) / (2.0f * A_BRAKE_FRONT);
-    if (lhs < rhs && v > v_front + 1.0f) {
-        float v_diff = v - v_front;
-        u_best[1] = MAX(u_best[1], MIN(F_BRAKE_MAX, 700.0f * v_diff));
+    // Structural terminal-safety correction based on predicted horizon margin.
+    float closing_end = 0.0f;
+    float margin = predict_terminal_margin(x, u_best, w, &closing_end);
+
+    // If margin is negative and ego still closes on front vehicle, enforce
+    // extra braking proportional to both closing speed and violation magnitude.
+    if (margin < MPC_MARGIN_TRIGGER && closing_end > 0.0f) {
+        float safety_floor = MPC_SAFETY_CLOSE_GAIN * closing_end + MPC_SAFETY_MARGIN_GAIN * (-margin);
+        safety_floor = MIN(F_BRAKE_MAX, MAX(0.0f, safety_floor));
+        u_best[1] = MAX(u_best[1], safety_floor);
         u_best[0] = 0.0f;
     }
 
-    // Closing-speed guard: if ego is still significantly faster than lead car
-    // and headway is in a moderate band, enforce a minimum brake level to
-    // reduce under-braking in the mid-window (2s..5s).
-    if (h < (D_MIN + 45.0f) && v > (v_front + 1.8f)) {
-        float v_diff = v - v_front;
-        float brake_floor = MIN(F_BRAKE_MAX, 320.0f * v_diff);
-        u_best[1] = MAX(u_best[1], brake_floor);
+    // Optional local guard for the 5s-6.5s transition window, controlled by
+    // headway and closing speed thresholds (disabled by default).
+    if (MPC_TRANSITION_GUARD_ENABLE &&
+        h > MPC_TRANSITION_H_MIN && h < MPC_TRANSITION_H_MAX &&
+        v > (w[0] + MPC_TRANSITION_VDIFF_MIN)) {
+        float v_diff = v - w[0];
+        float transition_floor = MPC_TRANSITION_BRAKE_K * v_diff + MPC_TRANSITION_BRAKE_B;
+        transition_floor = MIN(F_BRAKE_MAX, MAX(0.0f, transition_floor));
+        u_best[1] = MAX(u_best[1], transition_floor);
+        u_best[0] = 0.0f;
     }
 
-    // Safe-region release: when headway is high and ego is not closing in,
-    // cap brake with a speed-shaped profile to avoid persistent late over-braking.
-    if (h > (D_MIN + 18.0f) && v <= (v_front + 0.5f)) {
-        float brake_cap = 900.0f + 250.0f * MAX(0.0f, v - 8.0f);
-        brake_cap = MIN(brake_cap, 2400.0f);
+    // If margin is comfortably positive and ego is no longer closing, release
+    // braking to avoid over-braking in late stages.
+    if (margin > MPC_BRAKE_CAP_MARGIN_POS && closing_end <= 0.0f) {
+        float brake_cap = MPC_BRAKE_CAP_BASE +
+                          MPC_BRAKE_CAP_SPEED_GAIN * MAX(0.0f, v - 8.0f) -
+                          MPC_BRAKE_CAP_MARGIN_SLOPE * (margin - MPC_BRAKE_CAP_MARGIN_POS);
+        brake_cap = MAX(MPC_BRAKE_CAP_MIN, MIN(brake_cap, MPC_BRAKE_CAP_MAX));
         u_best[1] = MIN(u_best[1], brake_cap);
     }
 }

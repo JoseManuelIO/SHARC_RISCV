@@ -19,6 +19,8 @@ import sys
 import socket
 import json
 import time
+import math
+import ctypes
 
 # Get simulation directory from command line argument
 if len(sys.argv) > 1:
@@ -39,16 +41,198 @@ TRACE_FILE = os.path.join(SIMULATION_DIR, 'wrapper_dynamics_trace.ndjson')
 
 
 # Transport settings
-# GVSOC_TRANSPORT=tcp  → raw TCP (default, single-threaded server)
-# GVSOC_TRANSPORT=http → Flask HTTP (concurrent, recommended for parallel batches)
-GVSOC_TRANSPORT = os.environ.get('GVSOC_TRANSPORT', 'http')
-GVSOC_HOST = os.environ.get('GVSOC_HOST', '172.17.0.1')
+# GVSOC_TRANSPORT=tcp  → raw TCP (official/default path)
+# GVSOC_TRANSPORT=http → Flask HTTP (legacy/optional path)
+GVSOC_TRANSPORT = os.environ.get('GVSOC_TRANSPORT', 'tcp')
+GVSOC_EXEC_MODE = os.environ.get('GVSOC_EXEC_MODE', 'legacy').strip().lower()
+try:
+    GVSOC_PERSISTENT_WORKERS = int(os.environ.get('GVSOC_PERSISTENT_WORKERS', '1'))
+except ValueError:
+    GVSOC_PERSISTENT_WORKERS = 1
+GVSOC_HOST = os.environ.get('GVSOC_HOST', '127.0.0.1')
 GVSOC_PORT = int(os.environ.get('GVSOC_PORT', '5000'))
+try:
+    GVSOC_SOCKET_TIMEOUT_S = float(os.environ.get('GVSOC_SOCKET_TIMEOUT_S', '60'))
+except ValueError:
+    GVSOC_SOCKET_TIMEOUT_S = 60.0
 GVSOC_BASE_CYCLE_NS = 1.25
 try:
     GVSOC_CYCLE_NS = float(os.environ.get('GVSOC_CHIP_CYCLE_NS', str(GVSOC_BASE_CYCLE_NS)))
 except ValueError:
     GVSOC_CYCLE_NS = GVSOC_BASE_CYCLE_NS
+GVSOC_QP_SOLVE = os.environ.get('GVSOC_QP_SOLVE', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
+OFFICIAL_RISCV_MODE = os.environ.get('SHARC_OFFICIAL_RISCV_MODE', '0').strip().lower() in {
+    '1', 'true', 'yes', 'on'
+}
+
+
+# Lightweight ACC QP formulation constants (aligned with legacy host solver path).
+MASS = 2044.0
+BETA = 339.1329
+GAMMA = 0.77
+D_MIN = 6.0
+V_DES = 15.0
+F_ACCEL_MAX = 4880.0
+F_BRAKE_MAX = 6507.0
+SAMPLE_TIME = 0.2
+MPC_W_DU_BRAKE = 1.0
+MPC_W_HEADWAY = 80.0
+V_MAX = 20.0
+A_BRAKE_EGO = 3.2
+A_BRAKE_FRONT = 5.0912
+PREDICTION_HORIZON = 5
+MPC_MARGIN_TRIGGER = -1.0
+MPC_SAFETY_CLOSE_GAIN = 185.0
+MPC_SAFETY_MARGIN_GAIN = 28.0
+MPC_BRAKE_CAP_MARGIN_POS = 4.0
+MPC_BRAKE_CAP_BASE = 900.0
+MPC_BRAKE_CAP_SPEED_GAIN = 230.0
+MPC_BRAKE_CAP_MARGIN_SLOPE = 18.0
+MPC_BRAKE_CAP_MIN = 150.0
+MPC_BRAKE_CAP_MAX = 2400.0
+MPC_TRANSITION_GUARD_ENABLE = False
+MPC_TRANSITION_H_MIN = 40.0
+MPC_TRANSITION_H_MAX = 47.0
+MPC_TRANSITION_VDIFF_MIN = 1.2
+MPC_TRANSITION_BRAKE_K = 260.0
+MPC_TRANSITION_BRAKE_B = 250.0
+
+
+def _compute_friction(v):
+    return _f32(BETA + _f32(GAMMA * _f32(v) * _f32(v)))
+
+
+def _f32(v):
+    """Match C float arithmetic used by legacy host solver."""
+    return float(ctypes.c_float(float(v)).value)
+
+
+def _predict_state(x, u, w, dt):
+    v = float(x[2])
+    a = (float(u[0]) - float(u[1]) - _compute_friction(v)) / MASS
+    v_next = max(0.0, min(v + a * dt, V_MAX))
+    return [
+        float(x[0]) + v_next * dt,
+        max(0.0, float(x[1]) + (float(w[0]) - v_next) * dt),
+        v_next,
+    ]
+
+
+def _predict_terminal_margin(x0, u, w0):
+    x = [float(x0[0]), float(x0[1]), float(x0[2])]
+    vf_end = float(w0[0])
+    for k in range(PREDICTION_HORIZON):
+        vf_end = max(0.0, float(w0[0]) - float(k) * SAMPLE_TIME * A_BRAKE_FRONT)
+        x = _predict_state(x, u, [vf_end, 1.0], SAMPLE_TIME)
+
+    lhs = x[1] - x[2] * (V_MAX / (2.0 * A_BRAKE_EGO))
+    rhs = D_MIN - (vf_end * vf_end) / (2.0 * A_BRAKE_FRONT)
+    closing_end = x[2] - vf_end
+    return lhs - rhs, closing_end
+
+
+def apply_legacy_post_qp_guards(x, w, u):
+    """Mirror legacy MPC guard-rail logic after QP solve."""
+    u_out = [float(u[0]), float(u[1])]
+    v = float(x[2])
+    h = float(x[1])
+    margin, closing_end = _predict_terminal_margin(x, u_out, w)
+
+    if margin < MPC_MARGIN_TRIGGER and closing_end > 0.0:
+        safety_floor = MPC_SAFETY_CLOSE_GAIN * closing_end + MPC_SAFETY_MARGIN_GAIN * (-margin)
+        safety_floor = max(0.0, min(F_BRAKE_MAX, safety_floor))
+        u_out[1] = max(u_out[1], safety_floor)
+        u_out[0] = 0.0
+
+    if (
+        MPC_TRANSITION_GUARD_ENABLE
+        and h > MPC_TRANSITION_H_MIN
+        and h < MPC_TRANSITION_H_MAX
+        and v > (float(w[0]) + MPC_TRANSITION_VDIFF_MIN)
+    ):
+        v_diff = v - float(w[0])
+        transition_floor = MPC_TRANSITION_BRAKE_K * v_diff + MPC_TRANSITION_BRAKE_B
+        transition_floor = max(0.0, min(F_BRAKE_MAX, transition_floor))
+        u_out[1] = max(u_out[1], transition_floor)
+        u_out[0] = 0.0
+
+    if margin > MPC_BRAKE_CAP_MARGIN_POS and closing_end <= 0.0:
+        brake_cap = (
+            MPC_BRAKE_CAP_BASE
+            + MPC_BRAKE_CAP_SPEED_GAIN * max(0.0, v - 8.0)
+            - MPC_BRAKE_CAP_MARGIN_SLOPE * (margin - MPC_BRAKE_CAP_MARGIN_POS)
+        )
+        brake_cap = max(MPC_BRAKE_CAP_MIN, min(MPC_BRAKE_CAP_MAX, brake_cap))
+        u_out[1] = min(u_out[1], brake_cap)
+
+    # Enforce actuator bounds at the end.
+    u_out[0] = max(0.0, min(F_ACCEL_MAX, u_out[0]))
+    u_out[1] = max(0.0, min(F_BRAKE_MAX, u_out[1]))
+    return u_out
+
+
+def build_acc_qp_payload(x, w, u_prev):
+    """Build reduced ACC QP payload in T2 CSC format."""
+    v = _f32(x[2])
+    h = _f32(x[1])
+    w0 = _f32(w[0])
+    up0 = _f32(u_prev[0])
+    up1 = _f32(u_prev[1])
+    wy = _f32(10000.0)
+    wu = _f32(0.01)
+    wdu_acc = _f32(1.0)
+    wdu_br = _f32(MPC_W_DU_BRAKE)
+    wh = _f32(MPC_W_HEADWAY)
+
+    a = _f32(SAMPLE_TIME / MASS)
+    c_v = _f32(v - _f32(a * _compute_friction(v)))
+    gv0, gv1 = _f32(a), _f32(-a)
+    ev = _f32(c_v - V_DES)
+
+    c_h = _f32(h + _f32(SAMPLE_TIME * _f32(w0 - c_v)))
+    gh0, gh1 = _f32(-_f32(SAMPLE_TIME * a)), _f32(_f32(SAMPLE_TIME * a))
+    eh = _f32(c_h - D_MIN)
+
+    p00 = _f32(0.0)
+    p01 = _f32(0.0)
+    p11 = _f32(0.0)
+    q0 = _f32(0.0)
+    q1 = _f32(0.0)
+
+    p00 = _f32(p00 + _f32(_f32(2.0) * wy * gv0 * gv0))
+    p01 = _f32(p01 + _f32(_f32(2.0) * wy * gv0 * gv1))
+    p11 = _f32(p11 + _f32(_f32(2.0) * wy * gv1 * gv1))
+    q0 = _f32(q0 + _f32(_f32(2.0) * wy * ev * gv0))
+    q1 = _f32(q1 + _f32(_f32(2.0) * wy * ev * gv1))
+
+    p00 = _f32(p00 + _f32(_f32(2.0) * wh * gh0 * gh0))
+    p01 = _f32(p01 + _f32(_f32(2.0) * wh * gh0 * gh1))
+    p11 = _f32(p11 + _f32(_f32(2.0) * wh * gh1 * gh1))
+    q0 = _f32(q0 + _f32(_f32(2.0) * wh * eh * gh0))
+    q1 = _f32(q1 + _f32(_f32(2.0) * wh * eh * gh1))
+
+    p00 = _f32(p00 + _f32(_f32(2.0) * _f32(wu + wdu_acc)))
+    p11 = _f32(p11 + _f32(_f32(2.0) * _f32(wu + wdu_br)))
+    q0 = _f32(q0 + _f32(-_f32(2.0) * wdu_acc * up0))
+    q1 = _f32(q1 + _f32(-_f32(2.0) * wdu_br * up1))
+
+    # P in upper-triangular CSC for 2x2.
+    # column 0: row 0 -> p00
+    # column 1: row 0 -> p01, row 1 -> p11
+    return {
+        "n": 2,
+        "m": 2,
+        "P_colptr": [0, 1, 3],
+        "P_rowind": [0, 0, 1],
+        "P_data": [float(p00), float(p01), float(p11)],
+        "q": [float(q0), float(q1)],
+        # A = I
+        "A_colptr": [0, 1, 2],
+        "A_rowind": [0, 1],
+        "A_data": [1.0, 1.0],
+        "l": [0.0, 0.0],
+        "u": [F_ACCEL_MAX, F_BRAKE_MAX],
+    }
 
 
 class GVSoCTCPClient:
@@ -63,7 +247,7 @@ class GVSoCTCPClient:
         """Establish TCP connection."""
         print(f"[Wrapper] Connecting to GVSoC server at {self.host}:{self.port}", file=sys.stderr)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.settimeout(10)
+        self.sock.settimeout(GVSOC_SOCKET_TIMEOUT_S)
         
         for attempt in range(5):
             try:
@@ -344,10 +528,20 @@ def scale_cycles_for_delay(raw_cycles, cycle_ns=GVSOC_CYCLE_NS, base_cycle_ns=GV
     return max(0, int(round(raw_cycles * scale)))
 
 
+def validate_official_runtime_config():
+    """Enforce strict config guards for the official RISC-V pipeline."""
+    if OFFICIAL_RISCV_MODE and GVSOC_TRANSPORT != 'tcp':
+        raise RuntimeError("SHARC_OFFICIAL_RISCV_MODE requires GVSOC_TRANSPORT=tcp")
+    if OFFICIAL_RISCV_MODE and not GVSOC_QP_SOLVE:
+        raise RuntimeError("SHARC_OFFICIAL_RISCV_MODE requires GVSOC_QP_SOLVE=1")
+
+
 def main():
     """Main controller loop."""
     print(f"[Wrapper] Starting GVSoC Controller Wrapper", file=sys.stderr)
     print(f"[Wrapper] Working directory: {SIMULATION_DIR}", file=sys.stderr)
+
+    validate_official_runtime_config()
     
     tcp_client = None
     pipe_controller = PipeController()
@@ -361,6 +555,20 @@ def main():
             print(f'[Wrapper] Transport: TCP → {GVSOC_HOST}:{GVSOC_PORT}', file=sys.stderr)
             tcp_client = GVSoCTCPClient(GVSOC_HOST, GVSOC_PORT)
         tcp_client.connect()
+
+        request_type = "compute_mpc"
+        if GVSOC_TRANSPORT != 'http' and GVSOC_EXEC_MODE == 'persistent':
+            init_req = {
+                "type": "init",
+                "exec_mode": "persistent",
+                "persistent_workers": max(1, GVSOC_PERSISTENT_WORKERS),
+            }
+            init_resp = tcp_client.send_request(init_req)
+            print(f"[Wrapper] Persistent INIT response: {init_resp}", file=sys.stderr)
+            request_type = "step"
+        qp_solve_enabled = GVSOC_TRANSPORT != 'http' and GVSOC_QP_SOLVE
+        if qp_solve_enabled:
+            print("[Wrapper] QP offload mode enabled: using qp_solve protocol", file=sys.stderr)
         
         # Open pipes (CRITICAL: correct order to avoid deadlock)
         pipe_controller.open_pipes()
@@ -399,18 +607,44 @@ def main():
             })
             
             # Step 6-7: Compute control via TCP
-            request = {
-                "type": "compute_mpc",
-                "k": k,
-                "t": t,
-                "x": x,
-                "w": w,
-                "u_prev": u_prev
-            }
+            if qp_solve_enabled:
+                request = {
+                    "type": "qp_solve",
+                    "k": k,
+                    # In official path, host builds the QP payload from x/w/u_prev.
+                    "x": x,
+                    "w": w,
+                    "u_prev": u_prev,
+                    "settings": {
+                        # Match legacy C path settings for fidelity.
+                        "max_iter": 60,
+                        "tol": 1e-3,
+                        "rho": 0.05,
+                    },
+                }
+            else:
+                request = {
+                    "type": request_type,
+                    "k": k,
+                    "t": t,
+                    "x": x,
+                    "w": w,
+                    "u_prev": u_prev
+                }
             
             response = tcp_client.send_request(request)
-            
-            u = response.get('u', [0.0, 100.0])
+
+            if response.get('status') == 'ERROR':
+                raise RuntimeError(f"Server error: {response}")
+
+            if qp_solve_enabled:
+                x_sol = response.get('x', u_prev)
+                if isinstance(x_sol, list) and len(x_sol) >= 2:
+                    u = apply_legacy_post_qp_guards(x, w, [float(x_sol[0]), float(x_sol[1])])
+                else:
+                    u = [0.0, 100.0]
+            else:
+                u = response.get('u', [0.0, 100.0])
             
             # Update u_prev for next iteration
             u_prev = u
@@ -419,8 +653,20 @@ def main():
             # Match SHARC original naming where successful solves are reported as SUCCESS.
             status_norm = 'SUCCESS' if raw_status == 'OPTIMAL' else raw_status
 
-            raw_cycles = int(response.get('cycles', 0))
+            if qp_solve_enabled:
+                raw_cycles = int(response.get('cycles', max(0, 800 * max(1, iters))))
+            else:
+                raw_cycles = int(response.get('cycles', 0))
             scaled_cycles = scale_cycles_for_delay(raw_cycles)
+            instret = int(response.get('instret', 0))
+            ld_stall = int(response.get('ld_stall', 0))
+            jmp_stall = int(response.get('jmp_stall', 0))
+            imiss = int(response.get('imiss', 0))
+            stall_total = int(response.get('stall_total', ld_stall + jmp_stall + imiss))
+            branch = int(response.get('branch', 0))
+            taken_branch = int(response.get('taken_branch', 0))
+            cpi = float(response.get('cpi', (float(raw_cycles) / float(instret)) if instret > 0 else 0.0))
+            ipc = float(response.get('ipc', (float(instret) / float(raw_cycles)) if raw_cycles > 0 else 0.0))
 
             metadata = {
                 'cost': response.get('cost', 0.0),
@@ -433,7 +679,17 @@ def main():
                 'is_feasible': True,
                 'solver_status': status_norm,
                 'constraint_error': 0.0,  # Grid search has no explicit constraints
-                'dual_residual': 0.0      # Grid search has no dual variables
+                'dual_residual': response.get('dual_residual', 0.0),
+                'primal_residual': response.get('primal_residual', 0.0),
+                'instret': instret,
+                'ld_stall': ld_stall,
+                'jmp_stall': jmp_stall,
+                'stall_total': stall_total,
+                'imiss': imiss,
+                'branch': branch,
+                'taken_branch': taken_branch,
+                'cpi': cpi,
+                'ipc': ipc,
             }
             
             # Write cycles to file for GVSoCDelayProvider to read

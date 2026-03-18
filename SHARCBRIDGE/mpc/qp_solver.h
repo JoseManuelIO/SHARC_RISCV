@@ -5,14 +5,14 @@
 extern "C" {
 #endif
 
-// Simple QP solver using Projected Gradient Descent
+// Lightweight OSQP-style ADMM solver (box constraints only)
 // Solves: minimize 0.5*x'*P*x + q'*x
 //         subject to: l <= x <= u
 
 typedef struct {
     int max_iter;        // Maximum iterations
     float tol;           // Convergence tolerance
-    float alpha;         // Step size
+    float alpha;         // ADMM penalty rho (kept name for backward compatibility)
     int verbose;         // Print debug info
 } QPSettings;
 
