@@ -40,6 +40,16 @@ TRACE_FILE = os.path.join(SIMULATION_DIR, "cva6_wrapper_trace.ndjson")
 CVA6_TRANSPORT = os.environ.get("CVA6_TRANSPORT", "tcp").strip().lower()
 CVA6_HOST = os.environ.get("CVA6_HOST", "127.0.0.1")
 CVA6_PORT = int(os.environ.get("CVA6_PORT", "5001"))
+LEGACY_DELAY_BASE_CYCLE_NS = 1.25
+try:
+    CVA6_CYCLE_NS = float(
+        os.environ.get(
+            "CVA6_CHIP_CYCLE_NS",
+            os.environ.get("GVSOC_CHIP_CYCLE_NS", str(LEGACY_DELAY_BASE_CYCLE_NS)),
+        )
+    )
+except ValueError:
+    CVA6_CYCLE_NS = LEGACY_DELAY_BASE_CYCLE_NS
 try:
     CVA6_SOCKET_TIMEOUT_S = float(os.environ.get("CVA6_SOCKET_TIMEOUT_S", "60"))
 except ValueError:
@@ -215,6 +225,12 @@ def validate_runtime_config() -> None:
         raise RuntimeError("SHARC_CVA6_OFFICIAL_MODE requires CVA6_TRANSPORT=tcp")
 
 
+def scale_cycles_for_delay(raw_cycles: int, cycle_ns: float = CVA6_CYCLE_NS, base_cycle_ns: float = LEGACY_DELAY_BASE_CYCLE_NS) -> int:
+    raw_cycles = int(raw_cycles)
+    scale = cycle_ns / base_cycle_ns
+    return max(0, int(round(raw_cycles * scale)))
+
+
 def build_run_snapshot_request(
     request_id: Union[str, int],
     k: int,
@@ -252,6 +268,10 @@ def normalize_backend_response(response: Dict[str, Any]) -> Tuple[List[float], D
         "constraint_error": float(response.get("constraint_error", 0.0)),
         "dual_residual": float(response.get("dual_residual", 0.0)),
         "t_delay": float(response.get("t_delay", 0.0)),
+        "cycles": int(response.get("cycles", 0)),
+        "instret": int(response.get("instret", 0)),
+        "cpi": float(response.get("cpi", 0.0)),
+        "ipc": float(response.get("ipc", 0.0)),
         "backend": "cva6",
     }
     if "metadata" in response and isinstance(response["metadata"], dict):
@@ -307,6 +327,14 @@ def main() -> None:
             response = client.send_request(request)
             u, metadata = normalize_backend_response(response)
             u_prev = u
+            raw_cycles = int(metadata.get("cycles", 0))
+            scaled_cycles = scale_cycles_for_delay(raw_cycles)
+            metadata["scaled_cycles_for_delay"] = scaled_cycles
+            metadata["chip_cycle_time_ns_effective"] = CVA6_CYCLE_NS
+
+            cycles_file = os.path.join(SIMULATION_DIR, f"gvsoc_cycles_{k}.txt")
+            with open(cycles_file, "w", encoding="utf-8") as fh:
+                fh.write(str(scaled_cycles))
 
             pipes.write_vector(pipes.u_writer, u, "u")
             pipes.write_json(pipes.metadata_writer, metadata, "metadata")

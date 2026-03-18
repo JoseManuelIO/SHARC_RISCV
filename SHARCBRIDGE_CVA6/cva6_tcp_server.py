@@ -93,54 +93,57 @@ def serve_forever(host: str = SERVER_HOST, port: int = SERVER_PORT) -> None:
     launcher = CVA6RuntimeLauncher()
     shutdown_event = threading.Event()
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((host, port))
-        srv.listen(LISTEN_BACKLOG)
-        srv.settimeout(0.5)
-        print(f"[CVA6 TCP] Listening on {host}:{port}", file=sys.stderr)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind((host, port))
+            srv.listen(LISTEN_BACKLOG)
+            srv.settimeout(0.5)
+            print(f"[CVA6 TCP] Listening on {host}:{port}", file=sys.stderr)
 
-        while not shutdown_event.is_set():
-            try:
-                conn, addr = srv.accept()
-            except socket.timeout:
-                continue
+            while not shutdown_event.is_set():
+                try:
+                    conn, addr = srv.accept()
+                except socket.timeout:
+                    continue
 
-            with conn:
-                conn.settimeout(CONNECTION_TIMEOUT_S)
-                pending = b""
-                while not shutdown_event.is_set():
-                    while b"\n" not in pending:
-                        chunk = conn.recv(4096)
-                        if not chunk:
-                            pending = b""
+                with conn:
+                    conn.settimeout(CONNECTION_TIMEOUT_S)
+                    pending = b""
+                    while not shutdown_event.is_set():
+                        while b"\n" not in pending:
+                            chunk = conn.recv(4096)
+                            if not chunk:
+                                pending = b""
+                                break
+                            pending += chunk
+                            if len(pending) > MAX_BUFFER_BYTES:
+                                send_json(conn, build_error("request too large"))
+                                pending = b""
+                                break
+                        if not pending:
                             break
-                        pending += chunk
-                        if len(pending) > MAX_BUFFER_BYTES:
-                            send_json(conn, build_error("request too large"))
-                            pending = b""
-                            break
-                    if not pending:
-                        break
 
-                    line, _, pending = pending.partition(b"\n")
-                    try:
-                        payload = json.loads(line.decode("utf-8"))
-                    except Exception:
-                        send_json(conn, build_error("invalid json"))
-                        continue
+                        line, _, pending = pending.partition(b"\n")
+                        try:
+                            payload = json.loads(line.decode("utf-8"))
+                        except Exception:
+                            send_json(conn, build_error("invalid json"))
+                            continue
 
-                    ok, err = validate_request(payload)
-                    if not ok:
-                        send_json(conn, build_error(err, payload.get("request_id")))
-                        continue
+                        ok, err = validate_request(payload)
+                        if not ok:
+                            send_json(conn, build_error(err, payload.get("request_id")))
+                            continue
 
-                    try:
-                        response = handle_request(payload, launcher, shutdown_event)
-                    except Exception as exc:
-                        response = build_error(str(exc), payload.get("request_id"), code="BACKEND_ERROR")
+                        try:
+                            response = handle_request(payload, launcher, shutdown_event)
+                        except Exception as exc:
+                            response = build_error(str(exc), payload.get("request_id"), code="BACKEND_ERROR")
 
-                    send_json(conn, response)
+                        send_json(conn, response)
+    finally:
+        launcher.close()
 
 
 def main() -> None:

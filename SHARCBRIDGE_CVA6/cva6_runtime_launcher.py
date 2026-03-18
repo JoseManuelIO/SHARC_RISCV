@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from json import JSONDecoder
@@ -28,12 +30,15 @@ SPIKE_BIN = Path(os.environ.get("CVA6_SPIKE_BIN", SDK_DIR / "install64" / "bin" 
 SPIKE_PAYLOAD = Path(os.environ.get("CVA6_SPIKE_PAYLOAD", SDK_DIR / "install64" / "spike_fw_payload.elf"))
 RUNTIME_LOG_DIR = Path(os.environ.get("CVA6_RUNTIME_LOG_DIR", "/tmp/sharcbridge_cva6_runtime"))
 SPIKE_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_TIMEOUT_S", "120"))
+SPIKE_BOOT_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_BOOT_TIMEOUT_S", "30"))
 TARGET_RUNTIME_BIN = os.environ.get("CVA6_TARGET_RUNTIME_BIN", "/usr/bin/sharc_cva6_acc_runtime")
 TARGET_BASE_CONFIG = os.environ.get(
     "CVA6_TARGET_BASE_CONFIG",
     "/usr/share/sharcbridge_cva6/base_config.json",
 )
 TARGET_TMP_DIR = os.environ.get("CVA6_TARGET_TMP_DIR", "/tmp/sharcbridge_cva6")
+SHELL_PROMPT = os.environ.get("CVA6_SPIKE_SHELL_PROMPT", "# ")
+BOOT_MARKERS = [SHELL_PROMPT, "Starting sshd: OK", "NFS preparation skipped, OK", "Run /init as init process"]
 
 
 @dataclass
@@ -46,6 +51,134 @@ class SnapshotInput:
     u_prev: list[float]
 
 
+class PersistentSpikeSession:
+    def __init__(self) -> None:
+        self.proc: subprocess.Popen | None = None
+        self.selector: selectors.BaseSelector | None = None
+        self.lock = threading.Lock()
+        self.session_log_path = RUNTIME_LOG_DIR / "persistent_session.log"
+        self.session_log = None
+
+    def start(self) -> None:
+        if self.proc is not None and self.proc.poll() is None:
+            return
+
+        self.close()
+        self.session_log = self.session_log_path.open("a", encoding="utf-8")
+        self.proc = subprocess.Popen(
+            [str(SPIKE_BIN), str(SPIKE_PAYLOAD)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(self.proc.stdout, selectors.EVENT_READ)
+
+        boot_text = self._read_until(BOOT_MARKERS, SPIKE_BOOT_TIMEOUT_S)
+        if not any(marker in boot_text for marker in BOOT_MARKERS):
+            self.close()
+            raise RuntimeError("Persistent Spike session did not reach a stable boot marker")
+
+    def run_snapshot(self, snap: SnapshotInput) -> tuple[dict, str]:
+        with self.lock:
+            self.start()
+            assert self.proc is not None
+            assert self.proc.stdin is not None
+
+            request_tag = _sanitize_tag(snap.request_id)
+            guest_snapshot_path = f"{TARGET_TMP_DIR}/snapshot_{request_tag}.json"
+            begin_marker = f"__SHARCBRIDGE_BEGIN_{request_tag}__"
+            end_marker = f"__SHARCBRIDGE_END_{request_tag}__"
+            snapshot_payload = {
+                "snapshot_id": str(snap.request_id),
+                "k": int(snap.k),
+                "t": float(snap.t),
+                "x": [float(v) for v in snap.x],
+                "w": [float(v) for v in snap.w],
+                "u_prev": [float(v) for v in snap.u_prev],
+            }
+            command = _build_spike_command(
+                snapshot_payload=snapshot_payload,
+                guest_snapshot_path=guest_snapshot_path,
+                begin_marker=begin_marker,
+                end_marker=end_marker,
+            )
+
+            self.proc.stdin.write(command.encode("utf-8"))
+            self.proc.stdin.flush()
+
+            command_text = self._read_until([end_marker], SPIKE_TIMEOUT_S)
+            payload_text = _extract_between_markers(command_text, begin_marker, end_marker)
+            if payload_text is None:
+                raise RuntimeError(f"Could not isolate runtime output for request {request_tag}")
+
+            runtime_json = _extract_runtime_json(payload_text)
+            if runtime_json is None:
+                raise RuntimeError(f"Could not extract runtime JSON from persistent Spike output for request {request_tag}")
+            return runtime_json, payload_text
+
+    def _read_until(self, markers: list[str], timeout_s: float) -> str:
+        if self.proc is None or self.selector is None:
+            raise RuntimeError("Persistent Spike session is not started")
+
+        deadline = time.time() + timeout_s
+        chunks: list[str] = []
+        while time.time() < deadline:
+            events = self.selector.select(timeout=0.2)
+            if not events:
+                continue
+            for key, _ in events:
+                chunk = key.fileobj.read(4096)
+                if not chunk:
+                    self.close()
+                    raise RuntimeError("Persistent Spike session closed unexpectedly")
+                text = chunk.decode("utf-8", errors="ignore")
+                if self.session_log is not None:
+                    self.session_log.write(text)
+                    self.session_log.flush()
+                chunks.append(text)
+                joined = "".join(chunks)
+                for marker in markers:
+                    if marker in joined:
+                        return joined
+        raise RuntimeError(f"Timeout waiting for markers {markers}")
+
+    def close(self) -> None:
+        if self.selector is not None:
+            try:
+                self.selector.close()
+            except Exception:
+                pass
+            self.selector = None
+
+        if self.proc is not None:
+            try:
+                if self.proc.poll() is None and self.proc.stdin is not None:
+                    try:
+                        self.proc.stdin.write(b"poweroff -f\n")
+                        self.proc.stdin.flush()
+                    except Exception:
+                        pass
+                    time.sleep(0.2)
+                    if self.proc.poll() is None:
+                        self.proc.kill()
+                self.proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+            self.proc = None
+
+        if self.session_log is not None:
+            try:
+                self.session_log.close()
+            except Exception:
+                pass
+            self.session_log = None
+
+
 class CVA6RuntimeLauncher:
     """
     Backend launcher used by the TCP server.
@@ -54,6 +187,7 @@ class CVA6RuntimeLauncher:
     def __init__(self, mode: str | None = None):
         self.mode = (mode or RUNTIME_MODE or "mock").strip().lower()
         RUNTIME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self._persistent_session = PersistentSpikeSession() if self.mode == "spike_persistent" else None
 
     def health(self) -> dict:
         payload = {
@@ -76,6 +210,8 @@ class CVA6RuntimeLauncher:
             return self._run_mock_snapshot(snap)
         if self.mode == "spike":
             return self._run_spike_snapshot(snap)
+        if self.mode == "spike_persistent":
+            return self._run_spike_persistent_snapshot(snap)
         raise RuntimeError(f"Unsupported runtime mode: {self.mode}")
 
     def _run_mock_snapshot(self, snap: SnapshotInput) -> dict:
@@ -159,6 +295,20 @@ class CVA6RuntimeLauncher:
         if runtime_json is None:
             raise RuntimeError(f"Could not extract runtime JSON from Spike output (log: {log_path})")
 
+        return self._normalize_runtime_output(runtime_json, snap, t_delay, log_path)
+
+    def _run_spike_persistent_snapshot(self, snap: SnapshotInput) -> dict:
+        if self._persistent_session is None:
+            raise RuntimeError("Persistent Spike session is not initialized")
+        t0 = time.perf_counter()
+        runtime_json, payload_text = self._persistent_session.run_snapshot(snap)
+        t_delay = time.perf_counter() - t0
+        request_tag = _sanitize_tag(snap.request_id)
+        log_path = RUNTIME_LOG_DIR / f"persistent_{request_tag}.log"
+        log_path.write_text(payload_text, encoding="utf-8")
+        return self._normalize_runtime_output(runtime_json, snap, t_delay, log_path)
+
+    def _normalize_runtime_output(self, runtime_json: dict, snap: SnapshotInput, t_delay: float, log_path: Path) -> dict:
         metadata = runtime_json.get("metadata", {})
         return {
             "status": str(metadata.get("status", "SUCCESS")),
@@ -167,6 +317,10 @@ class CVA6RuntimeLauncher:
             "u": [float(runtime_json["u"][0]), float(runtime_json["u"][1])],
             "iterations": int(metadata.get("iterations", 0)),
             "cost": float(metadata.get("cost", 0.0)),
+            "cycles": int(metadata.get("cycles", 0)),
+            "instret": int(metadata.get("instret", 0)),
+            "cpi": float(metadata.get("cpi", 0.0)),
+            "ipc": float(metadata.get("ipc", 0.0)),
             "solver_status": str(metadata.get("solver_status", "")),
             "solver_status_msg": str(metadata.get("solver_status_msg", "")),
             "is_feasible": bool(metadata.get("is_feasible", False)),
@@ -181,22 +335,36 @@ class CVA6RuntimeLauncher:
             },
         }
 
+    def close(self) -> None:
+        if self._persistent_session is not None:
+            self._persistent_session.close()
+
 
 def _sanitize_tag(value: str | int) -> str:
     text = str(value)
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text)[:80] or "snapshot"
 
 
-def _build_spike_input(snapshot_payload: dict, guest_snapshot_path: str) -> str:
+def _build_spike_command(snapshot_payload: dict, guest_snapshot_path: str, begin_marker: str, end_marker: str) -> str:
     snapshot_json = json.dumps(snapshot_payload, separators=(",", ":"))
     return (
         f"mkdir -p {TARGET_TMP_DIR}\n"
         f"cat > {guest_snapshot_path} <<'JSON'\n"
         f"{snapshot_json}\n"
         "JSON\n"
+        f"echo {begin_marker}\n"
         f"{TARGET_RUNTIME_BIN} {TARGET_BASE_CONFIG} {guest_snapshot_path}\n"
-        "poweroff -f\n"
+        f"echo {end_marker}\n"
     )
+
+
+def _build_spike_input(snapshot_payload: dict, guest_snapshot_path: str) -> str:
+    return _build_spike_command(
+        snapshot_payload=snapshot_payload,
+        guest_snapshot_path=guest_snapshot_path,
+        begin_marker="__SHARCBRIDGE_BEGIN_ONESHOT__",
+        end_marker="__SHARCBRIDGE_END_ONESHOT__",
+    ) + "poweroff -f\n"
 
 
 def _extract_runtime_json(text: str) -> dict | None:
@@ -213,3 +381,14 @@ def _extract_runtime_json(text: str) -> dict | None:
         if "u" in obj and "metadata" in obj and "snapshot_id" in obj:
             return obj
     return None
+
+
+def _extract_between_markers(text: str, begin_marker: str, end_marker: str) -> str | None:
+    begin = text.find(begin_marker)
+    if begin == -1:
+        return None
+    begin += len(begin_marker)
+    end = text.find(end_marker, begin)
+    if end == -1:
+        return None
+    return text[begin:end]
