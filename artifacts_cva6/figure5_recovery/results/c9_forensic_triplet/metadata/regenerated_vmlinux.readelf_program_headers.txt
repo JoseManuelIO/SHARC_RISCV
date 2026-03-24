@@ -1,0 +1,38 @@
+
+Elf file type is EXEC (Executable file)
+Entry point 0xffffffe000000000
+There are 9 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  LOAD           0x0000000000001000 0xffffffe000000000 0x0000000000000000
+                 0x00000000000292f4 0x00000000000292f4  R E    0x1000
+  LOAD           0x000000000002b000 0xffffffe00002a000 0x000000000002a000
+                 0x00000000000061d8 0x00000000000061d8  RW     0x1000
+  LOAD           0x0000000000032000 0xffffffe000200000 0x0000000000200000
+                 0x000000000047006a 0x000000000047006a  R E    0x1000
+  LOAD           0x00000000004a3000 0xffffffe000671000 0x0000000000671000
+                 0x000000000073a7e8 0x000000000073a7e8  RW     0x1000
+  LOAD           0x0000000000bde000 0xffffffe000e00000 0x0000000000e00000
+                 0x000000000013a594 0x000000000013a594  RW     0x1000
+  LOAD           0x0000000000d19000 0xffffffe001000000 0x0000000001000000
+                 0x00000000000017c0 0x00000000000017c0  R      0x1000
+  LOAD           0x0000000000d1b000 0xffffffe001200000 0x0000000001200000
+                 0x00000000000af400 0x0000000000102175  RW     0x1000
+  NOTE           0x0000000000d18558 0xffffffe000f3a558 0x0000000000f3a558
+                 0x000000000000003c 0x000000000000003c  R      0x4
+  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000000 0x0000000000000000  RW     0x10
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     .head.text .init.text .exit.text 
+   01     .data..percpu 
+   02     .text 
+   03     .init.data 
+   04     .rodata __ksymtab __ksymtab_gpl __ksymtab_strings __param __modver .notes 
+   05     .srodata __ex_table 
+   06     .data __bug_table .sdata .pecoff_edata_padding .sbss .bss .init.bss 
+   07     .notes 
+   08     

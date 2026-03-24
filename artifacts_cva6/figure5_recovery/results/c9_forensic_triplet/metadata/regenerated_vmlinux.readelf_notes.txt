@@ -1,0 +1,7 @@
+
+Displaying notes found in: .notes
+  Owner                Data size 	Description
+  GNU                  0x00000014	NT_GNU_BUILD_ID (unique build ID bitstring)
+    Build ID: 9821dc5f76f646ae908f8bff42f33c6ed41f51a8
+  Linux                0x00000001	OPEN
+   description data: 00 

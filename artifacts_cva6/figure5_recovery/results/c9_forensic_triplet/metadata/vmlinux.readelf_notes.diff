@@ -1,0 +1,10 @@
+--- /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/good_vmlinux.readelf_notes.txt	2026-03-24 12:38:13.545053169 +0100
++++ /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/regenerated_vmlinux.readelf_notes.txt	2026-03-24 12:40:49.441323284 +0100
+@@ -2,6 +2,6 @@
+ Displaying notes found in: .notes
+   Owner                Data size 	Description
+   GNU                  0x00000014	NT_GNU_BUILD_ID (unique build ID bitstring)
+-    Build ID: 94a8643a0f61ae72a30682b6c680ab6281db8d0e
++    Build ID: 9821dc5f76f646ae908f8bff42f33c6ed41f51a8
+   Linux                0x00000001	OPEN
+    description data: 00 

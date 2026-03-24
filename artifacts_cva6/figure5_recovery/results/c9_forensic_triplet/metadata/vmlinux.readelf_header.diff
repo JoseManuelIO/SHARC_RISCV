@@ -1,0 +1,11 @@
+--- /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/good_vmlinux.readelf_header.txt	2026-03-24 12:38:13.538053100 +0100
++++ /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/regenerated_vmlinux.readelf_header.txt	2026-03-24 12:40:49.431323218 +0100
+@@ -10,7 +10,7 @@
+   Version:                           0x1
+   Entry point address:               0xffffffe000000000
+   Start of program headers:          64 (bytes into file)
+-  Start of section headers:          15635056 (bytes into file)
++  Start of section headers:          16790128 (bytes into file)
+   Flags:                             0x1, RVC, soft-float ABI
+   Size of this header:               64 (bytes)
+   Size of program headers:           56 (bytes)

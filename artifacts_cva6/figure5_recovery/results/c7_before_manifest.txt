@@ -1,0 +1,35 @@
+FILE SHARCBRIDGE_CVA6/build/cva6_acc_runtime
+3a8a56df8b799097695a6d4a33eaef912dae32f29d310033cf5f665ad6e031e8  SHARCBRIDGE_CVA6/build/cva6_acc_runtime
+STAT|SHARCBRIDGE_CVA6/build/cva6_acc_runtime|518400|2026-03-23 16:38:55.539966515 +0100
+SHARCBRIDGE_CVA6/build/cva6_acc_runtime: ELF 64-bit LSB pie executable, UCB RISC-V, RVC, double-float ABI, version 1 (GNU/Linux), dynamically linked, interpreter /lib/ld-linux-riscv64-lp64d.so.1, for GNU/Linux 5.10.0, not stripped
+
+FILE CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/bin/sharc_cva6_acc_runtime
+7feec3f980d6c0c2502ef343242648971e3b10151ef76781b888c1f3fc4b86fa  CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/bin/sharc_cva6_acc_runtime
+STAT|CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/bin/sharc_cva6_acc_runtime|400608|2026-03-24 10:33:24.307392437 +0100
+CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/bin/sharc_cva6_acc_runtime: ELF 64-bit LSB pie executable, UCB RISC-V, RVC, double-float ABI, version 1 (GNU/Linux), dynamically linked, interpreter /lib/ld-linux-riscv64-lp64d.so.1, for GNU/Linux 5.10.0, stripped
+
+FILE CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/share/sharcbridge_cva6/base_config.json
+0b2f599ab2626d8fc8104b3c35640591c6db0bb4bd83afd4049084e686b413c9  CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/share/sharcbridge_cva6/base_config.json
+STAT|CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/share/sharcbridge_cva6/base_config.json|2386|2026-03-23 16:38:55.551534767 +0100
+CVA6_LINUX/cva6-sdk/buildroot/output/target/usr/share/sharcbridge_cva6/base_config.json: JSON text data
+
+FILE CVA6_LINUX/cva6-sdk/buildroot/output/images/rootfs.cpio
+f31c19b61a80db3c8fd383b7159ea15313386798cec78337f6a514ca908340fa  CVA6_LINUX/cva6-sdk/buildroot/output/images/rootfs.cpio
+STAT|CVA6_LINUX/cva6-sdk/buildroot/output/images/rootfs.cpio|16755200|2026-03-24 10:33:29.463224301 +0100
+CVA6_LINUX/cva6-sdk/buildroot/output/images/rootfs.cpio: ASCII cpio archive (SVR4 with no CRC)
+
+FILE CVA6_LINUX/cva6-sdk/install64/vmlinux
+fd770e7f592532a4fa8bafc469df9c740f5ec4ab375747243f414940cac14d8a  CVA6_LINUX/cva6-sdk/install64/vmlinux
+STAT|CVA6_LINUX/cva6-sdk/install64/vmlinux|15636784|2026-03-24 10:36:26.773826066 +0100
+CVA6_LINUX/cva6-sdk/install64/vmlinux: ELF 64-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), statically linked, BuildID[sha1]=94a8643a0f61ae72a30682b6c680ab6281db8d0e, not stripped
+
+FILE CVA6_LINUX/cva6-sdk/install64/Image
+fd27ffa1d3554252e9dfa5d2de3c9eb3f05979c74c5e905f2d8935ae46b26e4a  CVA6_LINUX/cva6-sdk/install64/Image
+STAT|CVA6_LINUX/cva6-sdk/install64/Image|19592192|2026-03-24 10:36:33.061388564 +0100
+CVA6_LINUX/cva6-sdk/install64/Image: PE32+ executable (EFI application) RISC-V 64-bit (stripped to external PDB), for MS Windows, 2 sections
+
+FILE CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf
+6510db2d5b159f662f0ef4905357390e84033a5e2206fa2c1d02aa535e6584ea  CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf
+STAT|CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf|20555528|2026-03-24 10:36:34.217124311 +0100
+CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf: ELF 64-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), static-pie linked, with debug_info, not stripped
+

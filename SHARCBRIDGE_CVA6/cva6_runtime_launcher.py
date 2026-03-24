@@ -17,6 +17,8 @@ import selectors
 import subprocess
 import threading
 import time
+import hashlib
+from base64 import b64encode
 from dataclasses import dataclass
 from json import JSONDecoder
 from pathlib import Path
@@ -31,14 +33,58 @@ SPIKE_PAYLOAD = Path(os.environ.get("CVA6_SPIKE_PAYLOAD", SDK_DIR / "install64" 
 RUNTIME_LOG_DIR = Path(os.environ.get("CVA6_RUNTIME_LOG_DIR", "/tmp/sharcbridge_cva6_runtime"))
 SPIKE_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_TIMEOUT_S", "120"))
 SPIKE_BOOT_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_BOOT_TIMEOUT_S", "30"))
+SPIKE_READY_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_READY_TIMEOUT_S", "60"))
+SPIKE_BOOT_IDLE_S = float(os.environ.get("CVA6_SPIKE_BOOT_IDLE_S", "10.0"))
 TARGET_RUNTIME_BIN = os.environ.get("CVA6_TARGET_RUNTIME_BIN", "/usr/bin/sharc_cva6_acc_runtime")
 TARGET_BASE_CONFIG = os.environ.get(
     "CVA6_TARGET_BASE_CONFIG",
     "/usr/share/sharcbridge_cva6/base_config.json",
 )
 TARGET_TMP_DIR = os.environ.get("CVA6_TARGET_TMP_DIR", "/tmp/sharcbridge_cva6")
+STAGED_RUNTIME_BIN = os.environ.get("CVA6_STAGED_RUNTIME_BIN", f"{TARGET_TMP_DIR}/sharc_cva6_acc_runtime")
+STAGED_BASE_CONFIG = os.environ.get("CVA6_STAGED_BASE_CONFIG", f"{TARGET_TMP_DIR}/base_config.json")
+HOST_RUNTIME_BIN = Path(
+    os.environ.get(
+        "CVA6_HOST_RUNTIME_BIN",
+        SDK_DIR / "buildroot" / "output" / "target" / "usr" / "bin" / "sharc_cva6_acc_runtime",
+    )
+)
+HOST_BASE_CONFIG = Path(
+    os.environ.get(
+        "CVA6_HOST_BASE_CONFIG",
+        SDK_DIR / "buildroot" / "output" / "target" / "usr" / "share" / "sharcbridge_cva6" / "base_config.json",
+    )
+)
 SHELL_PROMPT = os.environ.get("CVA6_SPIKE_SHELL_PROMPT", "# ")
-BOOT_MARKERS = [SHELL_PROMPT, "Starting sshd: OK", "NFS preparation skipped, OK", "Run /init as init process"]
+BOOT_READY_MARKERS = [
+    SHELL_PROMPT,
+    "Starting sshd: OK",
+    "NFS preparation skipped, OK",
+]
+BOOT_PROGRESS_MARKERS = BOOT_READY_MARKERS + [
+    "Starting rpcbind: OK",
+    "Running sysctl: OK",
+    "Run /init as init process",
+]
+BOOT_LATE_PROGRESS_MARKERS = ["Starting sshd: "] + BOOT_READY_MARKERS
+
+
+def _load_host_asset_b64(path: Path) -> str:
+    if not path.is_file():
+        raise RuntimeError(f"Missing host asset required for guest staging: {path}")
+    return b64encode(path.read_bytes()).decode("ascii")
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+HOST_RUNTIME_BIN_B64 = _load_host_asset_b64(HOST_RUNTIME_BIN)
+HOST_BASE_CONFIG_B64 = _load_host_asset_b64(HOST_BASE_CONFIG)
+HOST_RUNTIME_BIN_SHA256 = _sha256_file(HOST_RUNTIME_BIN)
+HOST_BASE_CONFIG_SHA256 = _sha256_file(HOST_BASE_CONFIG)
+HOST_RUNTIME_BIN_SIZE = HOST_RUNTIME_BIN.stat().st_size
+HOST_BASE_CONFIG_SIZE = HOST_BASE_CONFIG.stat().st_size
 
 
 @dataclass
@@ -58,6 +104,7 @@ class PersistentSpikeSession:
         self.lock = threading.Lock()
         self.session_log_path = RUNTIME_LOG_DIR / "persistent_session.log"
         self.session_log = None
+        self._guest_assets_ready = False
 
     def start(self) -> None:
         if self.proc is not None and self.proc.poll() is None:
@@ -75,10 +122,9 @@ class PersistentSpikeSession:
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.proc.stdout, selectors.EVENT_READ)
 
-        boot_text = self._read_until(BOOT_MARKERS, SPIKE_BOOT_TIMEOUT_S)
-        if not any(marker in boot_text for marker in BOOT_MARKERS):
-            self.close()
-            raise RuntimeError("Persistent Spike session did not reach a stable boot marker")
+        _wait_for_boot_ready(self._read_until, self._read_until_idle)
+        _ensure_interactive_shell_ready(self.proc, self._read_until)
+        self._ensure_guest_assets()
 
     def run_snapshot(self, snap: SnapshotInput) -> tuple[dict, str]:
         with self.lock:
@@ -118,6 +164,36 @@ class PersistentSpikeSession:
                 raise RuntimeError(f"Could not extract runtime JSON from persistent Spike output for request {request_tag}")
             return runtime_json, payload_text
 
+    def _ensure_guest_assets(self) -> None:
+        if self._guest_assets_ready:
+            return
+
+        assert self.proc is not None
+        assert self.proc.stdin is not None
+
+        stage_begin = "__SHARCBRIDGE_STAGE_BEGIN__"
+        stage_end = "__SHARCBRIDGE_STAGE_END__"
+        self.proc.stdin.write(_build_guest_asset_stage_command(stage_begin, stage_end).encode("utf-8"))
+        self.proc.stdin.flush()
+        stage_text = self._read_until([stage_end], SPIKE_TIMEOUT_S)
+        if "STAGE_RUNTIME_READY=1" not in stage_text:
+            raise RuntimeError("Guest runtime staging did not produce a usable runtime binary")
+        if "STAGE_CONFIG_READY=1" not in stage_text:
+            raise RuntimeError("Guest runtime staging did not produce a usable base config")
+        _validate_optional_stage_hash(
+            stage_text,
+            marker_name="STAGE_RUNTIME_SHA",
+            expected_hash=HOST_RUNTIME_BIN_SHA256,
+            error_message="Guest runtime staging hash did not match the host runtime binary",
+        )
+        _validate_optional_stage_hash(
+            stage_text,
+            marker_name="STAGE_CONFIG_SHA",
+            expected_hash=HOST_BASE_CONFIG_SHA256,
+            error_message="Guest config staging hash did not match the host config",
+        )
+        self._guest_assets_ready = True
+
     def _read_until(self, markers: list[str], timeout_s: float) -> str:
         if self.proc is None or self.selector is None:
             raise RuntimeError("Persistent Spike session is not started")
@@ -143,6 +219,42 @@ class PersistentSpikeSession:
                     if marker in joined:
                         return joined
         raise RuntimeError(f"Timeout waiting for markers {markers}")
+
+    def _read_until_idle(self, idle_s: float, timeout_s: float, stop_markers: list[str] | None = None) -> str:
+        if self.proc is None or self.selector is None:
+            raise RuntimeError("Persistent Spike session is not started")
+
+        deadline = time.time() + timeout_s
+        chunks: list[str] = []
+        last_output_ts = time.time()
+        while time.time() < deadline:
+            events = self.selector.select(timeout=0.2)
+            if not events:
+                if self.proc.poll() is not None:
+                    self.close()
+                    raise RuntimeError("Persistent Spike session closed unexpectedly")
+                if time.time() - last_output_ts >= idle_s:
+                    return "".join(chunks)
+                continue
+            for key, _ in events:
+                chunk = key.fileobj.read(4096)
+                if not chunk:
+                    if self.proc.poll() is not None:
+                        self.close()
+                        raise RuntimeError("Persistent Spike session closed unexpectedly")
+                    continue
+                text = chunk.decode("utf-8", errors="ignore")
+                if self.session_log is not None:
+                    self.session_log.write(text)
+                    self.session_log.flush()
+                chunks.append(text)
+                last_output_ts = time.time()
+                joined = "".join(chunks)
+                if stop_markers:
+                    for marker in stop_markers:
+                        if marker in joined:
+                            return joined
+        raise RuntimeError(f"Timeout waiting for idle window or markers {stop_markers}")
 
     def close(self) -> None:
         if self.selector is not None:
@@ -170,6 +282,7 @@ class PersistentSpikeSession:
                 except Exception:
                     pass
             self.proc = None
+            self._guest_assets_ready = False
 
         if self.session_log is not None:
             try:
@@ -194,9 +307,12 @@ class CVA6RuntimeLauncher:
             "status": "OK",
             "runtime_mode": self.mode,
         }
-        if self.mode == "spike":
+        if self.mode in {"spike", "spike_persistent"}:
             payload.update(
                 {
+                    "sdk_dir": str(SDK_DIR.resolve()),
+                    "spike_bin": str(SPIKE_BIN.resolve(strict=False)),
+                    "spike_payload": str(SPIKE_PAYLOAD.resolve(strict=False)),
                     "spike_bin_exists": SPIKE_BIN.is_file(),
                     "spike_payload_exists": SPIKE_PAYLOAD.is_file(),
                     "target_runtime_bin": TARGET_RUNTIME_BIN,
@@ -265,35 +381,27 @@ class CVA6RuntimeLauncher:
             "w": [float(v) for v in snap.w],
             "u_prev": [float(v) for v in snap.u_prev],
         }
-        spike_input = _build_spike_input(snapshot_payload, guest_snapshot_path)
+        begin_marker = "__SHARCBRIDGE_BEGIN_ONESHOT__"
+        end_marker = "__SHARCBRIDGE_END_ONESHOT__"
+        command = _build_spike_command(
+            snapshot_payload=snapshot_payload,
+            guest_snapshot_path=guest_snapshot_path,
+            begin_marker=begin_marker,
+            end_marker=end_marker,
+        ) + "poweroff -f\n"
         log_path = RUNTIME_LOG_DIR / f"{request_tag}.log"
 
         t0 = time.perf_counter()
-        try:
-            proc = subprocess.run(
-                [str(SPIKE_BIN), str(SPIKE_PAYLOAD)],
-                input=spike_input,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=SPIKE_TIMEOUT_S,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            output = exc.stdout or ""
-            log_path.write_text(output, encoding="utf-8")
-            raise RuntimeError(f"Spike timeout after {SPIKE_TIMEOUT_S:.1f}s (log: {log_path})") from exc
-
+        output = _run_spike_oneshot_command(command, [end_marker], log_path)
         t_delay = time.perf_counter() - t0
-        output = proc.stdout or ""
-        log_path.write_text(output, encoding="utf-8")
 
-        if proc.returncode != 0:
-            raise RuntimeError(f"Spike exited with code {proc.returncode} (log: {log_path})")
+        payload_text = _extract_between_markers(output, begin_marker, end_marker)
+        if payload_text is None:
+            raise RuntimeError(f"Could not isolate runtime output for oneshot request {request_tag} (log: {log_path})")
 
-        runtime_json = _extract_runtime_json(output)
+        runtime_json = _extract_runtime_json(payload_text)
         if runtime_json is None:
-            raise RuntimeError(f"Could not extract runtime JSON from Spike output (log: {log_path})")
+            raise RuntimeError(f"Could not extract runtime JSON from Spike oneshot output (log: {log_path})")
 
         return self._normalize_runtime_output(runtime_json, snap, t_delay, log_path)
 
@@ -349,11 +457,13 @@ def _build_spike_command(snapshot_payload: dict, guest_snapshot_path: str, begin
     snapshot_json = json.dumps(snapshot_payload, separators=(",", ":"))
     return (
         f"mkdir -p {TARGET_TMP_DIR}\n"
-        f"cat > {guest_snapshot_path} <<'JSON'\n"
-        f"{snapshot_json}\n"
-        "JSON\n"
+        f"printf '%s\\n' '{snapshot_json}' > {guest_snapshot_path}\n"
+        f'RUNTIME_BIN="{TARGET_RUNTIME_BIN}"\n'
+        f'[ -x "$RUNTIME_BIN" ] || RUNTIME_BIN="{STAGED_RUNTIME_BIN}"\n'
+        f'BASE_CONFIG="{TARGET_BASE_CONFIG}"\n'
+        f'[ -e "$BASE_CONFIG" ] || BASE_CONFIG="{STAGED_BASE_CONFIG}"\n'
         f"echo {begin_marker}\n"
-        f"{TARGET_RUNTIME_BIN} {TARGET_BASE_CONFIG} {guest_snapshot_path}\n"
+        f'"$RUNTIME_BIN" "$BASE_CONFIG" {guest_snapshot_path}\n'
         f"echo {end_marker}\n"
     )
 
@@ -365,6 +475,120 @@ def _build_spike_input(snapshot_payload: dict, guest_snapshot_path: str) -> str:
         begin_marker="__SHARCBRIDGE_BEGIN_ONESHOT__",
         end_marker="__SHARCBRIDGE_END_ONESHOT__",
     ) + "poweroff -f\n"
+
+
+def _validate_optional_stage_hash(stage_text: str, marker_name: str, expected_hash: str, error_message: str) -> None:
+    marker = f"{marker_name}="
+    if marker not in stage_text:
+        return
+    if f"{marker}{expected_hash}" not in stage_text:
+        raise RuntimeError(error_message)
+
+
+def _run_spike_oneshot_command(command: str, end_markers: list[str], log_path: Path) -> str:
+    proc = subprocess.Popen(
+        [str(SPIKE_BIN), str(SPIKE_PAYLOAD)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    selector = selectors.DefaultSelector()
+    output_chunks: list[str] = []
+
+    def _read_until(markers: list[str], timeout_s: float) -> str:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            events = selector.select(timeout=0.2)
+            if not events:
+                if proc.poll() is not None:
+                    raise RuntimeError(f"Spike exited with code {proc.returncode} before markers {markers}")
+                continue
+            for key, _ in events:
+                chunk = key.fileobj.read(4096)
+                if not chunk:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f"Spike exited with code {proc.returncode} before markers {markers}")
+                    continue
+                text = chunk.decode("utf-8", errors="ignore")
+                output_chunks.append(text)
+                joined = "".join(output_chunks)
+                for marker in markers:
+                    if marker in joined:
+                        return joined
+        raise RuntimeError(f"Timeout waiting for markers {markers}")
+
+    def _read_until_idle(idle_s: float, timeout_s: float, stop_markers: list[str] | None = None) -> str:
+        deadline = time.time() + timeout_s
+        last_output_ts = time.time()
+        while time.time() < deadline:
+            events = selector.select(timeout=0.2)
+            if not events:
+                if proc.poll() is not None:
+                    raise RuntimeError(f"Spike exited with code {proc.returncode} before idle window or markers {stop_markers}")
+                if time.time() - last_output_ts >= idle_s:
+                    return "".join(output_chunks)
+                continue
+            for key, _ in events:
+                chunk = key.fileobj.read(4096)
+                if not chunk:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f"Spike exited with code {proc.returncode} before idle window or markers {stop_markers}")
+                    continue
+                text = chunk.decode("utf-8", errors="ignore")
+                output_chunks.append(text)
+                last_output_ts = time.time()
+                joined = "".join(output_chunks)
+                if stop_markers:
+                    for marker in stop_markers:
+                        if marker in joined:
+                            return joined
+        raise RuntimeError(f"Timeout waiting for idle window or markers {stop_markers}")
+
+    try:
+        if proc.stdout is None or proc.stdin is None:
+            raise RuntimeError("Failed to open Spike stdio streams")
+        selector.register(proc.stdout, selectors.EVENT_READ)
+
+        _wait_for_boot_ready(_read_until, _read_until_idle)
+        _ensure_interactive_shell_ready(proc, _read_until)
+        proc.stdin.write(
+            _build_guest_asset_stage_command(
+                "__SHARCBRIDGE_STAGE_BEGIN__",
+                "__SHARCBRIDGE_STAGE_END__",
+            ).encode("utf-8")
+        )
+        proc.stdin.flush()
+        _read_until(["__SHARCBRIDGE_STAGE_END__"], SPIKE_TIMEOUT_S)
+        proc.stdin.write(command.encode("utf-8"))
+        proc.stdin.flush()
+        output = _read_until(end_markers, SPIKE_TIMEOUT_S)
+        return output
+    finally:
+        try:
+            log_path.write_text("".join(output_chunks), encoding="utf-8")
+        except Exception:
+            pass
+        try:
+            selector.close()
+        except Exception:
+            pass
+        try:
+            if proc.poll() is None and proc.stdin is not None:
+                try:
+                    proc.stdin.write(b"poweroff -f\n")
+                    proc.stdin.flush()
+                except Exception:
+                    pass
+                time.sleep(0.2)
+                if proc.poll() is None:
+                    proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 def _extract_runtime_json(text: str) -> dict | None:
@@ -392,3 +616,117 @@ def _extract_between_markers(text: str, begin_marker: str, end_marker: str) -> s
     if end == -1:
         return None
     return text[begin:end]
+
+
+def _wait_for_boot_ready(read_until_fn, read_until_idle_fn) -> str:
+    boot_text = read_until_fn(BOOT_PROGRESS_MARKERS, SPIKE_BOOT_TIMEOUT_S)
+    if any(marker in boot_text for marker in BOOT_READY_MARKERS):
+        return boot_text
+    late_boot_text = ""
+    try:
+        late_boot_text = read_until_fn(BOOT_LATE_PROGRESS_MARKERS, SPIKE_READY_TIMEOUT_S)
+    except RuntimeError:
+        return boot_text + read_until_idle_fn(
+            SPIKE_BOOT_IDLE_S,
+            SPIKE_READY_TIMEOUT_S,
+            BOOT_READY_MARKERS,
+        )
+
+    combined = boot_text + late_boot_text
+    if any(marker in combined for marker in BOOT_READY_MARKERS):
+        return combined
+    return combined + read_until_idle_fn(
+        SPIKE_BOOT_IDLE_S,
+        SPIKE_READY_TIMEOUT_S,
+        BOOT_READY_MARKERS,
+    )
+
+
+def _ensure_interactive_shell_ready(proc: subprocess.Popen, read_until_fn, attempts: int = 3) -> None:
+    if proc.stdin is None:
+        raise RuntimeError("Spike stdin is not available to establish shell readiness")
+
+    for attempt in range(attempts):
+        ready_marker = f"__SHARCBRIDGE_SHELL_READY_{attempt}__"
+        proc.stdin.write(b"\n")
+        proc.stdin.flush()
+        try:
+            read_until_fn([SHELL_PROMPT], 10)
+        except RuntimeError:
+            pass
+        proc.stdin.write(f"echo {ready_marker}\n".encode("utf-8"))
+        proc.stdin.flush()
+        try:
+            read_until_fn([ready_marker], 15)
+            return
+        except RuntimeError:
+            continue
+    raise RuntimeError("Could not establish an interactive guest shell before staging")
+
+
+def _build_guest_asset_stage_command(begin_marker: str, end_marker: str) -> str:
+    return (
+        f"mkdir -p {TARGET_TMP_DIR}\n"
+        f"echo {begin_marker}\n"
+        "stty -echo 2>/dev/null || true\n"
+        f'if [ ! -x "{TARGET_RUNTIME_BIN}" ] && [ ! -x "{STAGED_RUNTIME_BIN}" ]; then\n'
+        f'RUNTIME_B64="{STAGED_RUNTIME_BIN}.b64"\n'
+        f'RUNTIME_TMP="{STAGED_RUNTIME_BIN}.tmp"\n'
+        f'rm -f "$RUNTIME_B64" "$RUNTIME_TMP"\n'
+        f"{_build_base64_heredoc_commands(HOST_RUNTIME_BIN_B64, '$RUNTIME_B64', 'SHARCBRIDGE_RUNTIME_B64')}"
+        'if base64 -d "$RUNTIME_B64" > "$RUNTIME_TMP"; then\n'
+        f'RUNTIME_SHA="$(sha256sum "$RUNTIME_TMP" | awk \'{{print $1}}\')"\n'
+        f'RUNTIME_SIZE="$(wc -c < "$RUNTIME_TMP" | tr -d \' \')"\n'
+        'echo "STAGE_RUNTIME_SHA=$RUNTIME_SHA"\n'
+        'echo "STAGE_RUNTIME_SIZE=$RUNTIME_SIZE"\n'
+        f'if [ "$RUNTIME_SHA" = "{HOST_RUNTIME_BIN_SHA256}" ] && [ "$RUNTIME_SIZE" = "{HOST_RUNTIME_BIN_SIZE}" ]; then\n'
+        f'chmod +x "$RUNTIME_TMP"\n'
+        f'mv "$RUNTIME_TMP" "{STAGED_RUNTIME_BIN}"\n'
+        "else\n"
+        'rm -f "$RUNTIME_TMP"\n'
+        "fi\n"
+        "fi\n"
+        'rm -f "$RUNTIME_B64" "$RUNTIME_TMP"\n'
+        "fi\n"
+        f'if [ ! -e "{TARGET_BASE_CONFIG}" ] && [ ! -e "{STAGED_BASE_CONFIG}" ]; then\n'
+        f'CONFIG_B64="{STAGED_BASE_CONFIG}.b64"\n'
+        f'CONFIG_TMP="{STAGED_BASE_CONFIG}.tmp"\n'
+        f'rm -f "$CONFIG_B64" "$CONFIG_TMP"\n'
+        f"{_build_base64_heredoc_commands(HOST_BASE_CONFIG_B64, '$CONFIG_B64', 'SHARCBRIDGE_CONFIG_B64')}"
+        'if base64 -d "$CONFIG_B64" > "$CONFIG_TMP"; then\n'
+        f'CONFIG_SHA="$(sha256sum "$CONFIG_TMP" | awk \'{{print $1}}\')"\n'
+        f'CONFIG_SIZE="$(wc -c < "$CONFIG_TMP" | tr -d \' \')"\n'
+        'echo "STAGE_CONFIG_SHA=$CONFIG_SHA"\n'
+        'echo "STAGE_CONFIG_SIZE=$CONFIG_SIZE"\n'
+        f'if [ "$CONFIG_SHA" = "{HOST_BASE_CONFIG_SHA256}" ] && [ "$CONFIG_SIZE" = "{HOST_BASE_CONFIG_SIZE}" ]; then\n'
+        f'mv "$CONFIG_TMP" "{STAGED_BASE_CONFIG}"\n'
+        "else\n"
+        'rm -f "$CONFIG_TMP"\n'
+        "fi\n"
+        "fi\n"
+        'rm -f "$CONFIG_B64" "$CONFIG_TMP"\n'
+        "fi\n"
+        f'if [ -x "{TARGET_RUNTIME_BIN}" ] || [ -x "{STAGED_RUNTIME_BIN}" ]; then echo STAGE_RUNTIME_READY=1; else echo STAGE_RUNTIME_READY=0; fi\n'
+        f'if [ -e "{TARGET_BASE_CONFIG}" ] || [ -e "{STAGED_BASE_CONFIG}" ]; then echo STAGE_CONFIG_READY=1; else echo STAGE_CONFIG_READY=0; fi\n'
+        "stty echo 2>/dev/null || true\n"
+        f"echo {end_marker}\n"
+    )
+
+
+def _build_base64_heredoc_commands(
+    payload_b64: str,
+    guest_path_expr: str,
+    heredoc_tag: str,
+    chunk_size: int = 65536,
+) -> str:
+    lines = [f': > {guest_path_expr}']
+    for idx in range(0, len(payload_b64), chunk_size):
+        chunk = payload_b64[idx : idx + chunk_size]
+        marker = f"{heredoc_tag}_{idx // chunk_size}"
+        wrapped = "\n".join(
+            chunk[line_start : line_start + 120] for line_start in range(0, len(chunk), 120)
+        )
+        lines.append(f"cat >> {guest_path_expr} <<'{marker}'")
+        lines.append(wrapped)
+        lines.append(marker)
+    return "\n".join(lines) + "\n"

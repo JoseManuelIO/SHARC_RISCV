@@ -1,0 +1,43 @@
+FILE /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.vmlinux
+fd770e7f592532a4fa8bafc469df9c740f5ec4ab375747243f414940cac14d8a  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.vmlinux
+STAT|/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.vmlinux|15636784|2026-03-24 13:10:07.181885293 +0100
+
+FILE /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.Image
+fd27ffa1d3554252e9dfa5d2de3c9eb3f05979c74c5e905f2d8935ae46b26e4a  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.Image
+STAT|/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.Image|19592192|2026-03-24 13:10:07.221880426 +0100
+
+FILE /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.spike_fw_payload.elf
+6510db2d5b159f662f0ef4905357390e84033a5e2206fa2c1d02aa535e6584ea  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.spike_fw_payload.elf
+STAT|/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/install64.spike_fw_payload.elf|20555528|2026-03-24 13:10:07.261596286 +0100
+
+FILE /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.vmlinux
+fd770e7f592532a4fa8bafc469df9c740f5ec4ab375747243f414940cac14d8a  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.vmlinux
+STAT|/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.vmlinux|15636784|2026-03-24 13:10:07.293931568 +0100
+
+FILE /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.Image
+fd27ffa1d3554252e9dfa5d2de3c9eb3f05979c74c5e905f2d8935ae46b26e4a  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.Image
+STAT|/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.Image|19592192|2026-03-24 13:10:07.366051657 +0100
+
+FILE /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.spike_fw_payload.elf
+6510db2d5b159f662f0ef4905357390e84033a5e2206fa2c1d02aa535e6584ea  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.spike_fw_payload.elf
+STAT|/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/r0_reinstall_backup/sdk_install64.spike_fw_payload.elf|20555528|2026-03-24 13:10:07.415883009 +0100
+
+repo_head=20d185a
+sdk_head=77fc4a9
+sdk_status_begin
+ M configs/buildroot64_defconfig
+ m riscv-isa-sim
+ M rootfs/etc/init.d/S40fixup
+ m vitetris
+?? hello
+?? hello.c
+?? rootfs/usr/bin/
+sdk_status_end
+sdk_submodules_begin
+ aa433d1c5cfbd72b64ff3f92f2ffa2e02ea7089b buildroot (2021.08)
+ be245acfffa297b5ed4e0c7bb473a6bd55231bf8 opensbi (v0.9-166-gbe245acf)
+ cc38be9991f3abd0831d141ebff8b4fd7a4990ea riscv-isa-sim (v1.0.0-610-gcc38be99)
+ fbd7e037ec947c6e9dddc9b78c1cd6bc0fce9993 riscv-tests (remotes/origin/debug-clear-satp-40-gfbd7e03)
+ f6220650cabb75933abf932c8cbed40363e44f0a u-boot (remotes/origin/cva6)
+ a922c8b8d082ba0af056d2650950e3be0f5a7b90 vitetris (v0.57.2-12-ga922c8b)
+sdk_submodules_end

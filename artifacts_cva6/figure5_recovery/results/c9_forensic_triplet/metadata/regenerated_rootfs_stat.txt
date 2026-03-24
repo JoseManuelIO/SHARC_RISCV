@@ -1,0 +1,1 @@
+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/rootfs.cpio|16755200|2026-03-24 12:40:49.324322511 +0100

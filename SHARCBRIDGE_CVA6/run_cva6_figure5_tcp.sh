@@ -21,6 +21,20 @@ CVA6_HOST="${CVA6_HOST:-127.0.0.1}"
 CVA6_PORT="${CVA6_PORT:-5001}"
 CVA6_BIND_HOST="${CVA6_BIND_HOST:-0.0.0.0}"
 CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE:-spike_persistent}"
+CVA6_REQUEST_EXEC_TIMEOUT_S="${CVA6_REQUEST_EXEC_TIMEOUT_S:-${CVA6_SPIKE_TIMEOUT_S:-300}}"
+if [ -n "${CVA6_SOCKET_TIMEOUT_S:-}" ]; then
+  CVA6_SOCKET_TIMEOUT_S="${CVA6_SOCKET_TIMEOUT_S}"
+else
+  CVA6_SOCKET_TIMEOUT_S="$(${PYTHON_BIN} - "${CVA6_REQUEST_EXEC_TIMEOUT_S}" <<'PYEOF'
+import sys
+try:
+    base = float(sys.argv[1])
+except Exception:
+    base = 300.0
+print(f"{base + 30.0:.1f}")
+PYEOF
+)"
+fi
 SHARC_CVA6_OFFICIAL_MODE="${SHARC_CVA6_OFFICIAL_MODE:-1}"
 TIMESTAMP="$(date +%Y-%m-%d--%H-%M-%S)"
 OUT_DIR="/tmp/sharc_cva6_figure5/${TIMESTAMP}-${CONFIG_NAME%.json}"
@@ -35,6 +49,39 @@ elif [ -n "${GVSOC_CHIP_CYCLE_NS:-}" ]; then
   DOCKER_ENV_ARGS+=(-e "GVSOC_CHIP_CYCLE_NS=${GVSOC_CHIP_CYCLE_NS}")
   DOCKER_ENV_ARGS+=(-e "CVA6_CHIP_CYCLE_NS=${GVSOC_CHIP_CYCLE_NS}")
 fi
+
+resolve_effective_spike_bin() {
+  if [ -n "${CVA6_SPIKE_BIN:-}" ]; then
+    echo "${CVA6_SPIKE_BIN}"
+    return 0
+  fi
+
+  if [ -n "${CVA6_SDK_DIR:-}" ] && [ -x "${CVA6_SDK_DIR}/install64/bin/spike" ]; then
+    echo "${CVA6_SDK_DIR}/install64/bin/spike"
+    return 0
+  fi
+
+  if [ -x "${REPO_DIR}/CVA6_LINUX/cva6-sdk/install64/bin/spike" ]; then
+    echo "${REPO_DIR}/CVA6_LINUX/cva6-sdk/install64/bin/spike"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_effective_spike_payload() {
+  if [ -n "${CVA6_SPIKE_PAYLOAD:-}" ]; then
+    echo "${CVA6_SPIKE_PAYLOAD}"
+    return 0
+  fi
+
+  if [ -n "${CVA6_SDK_DIR:-}" ]; then
+    echo "${CVA6_SDK_DIR}/install64/spike_fw_payload.elf"
+    return 0
+  fi
+
+  echo "${REPO_DIR}/CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf"
+}
 
 probe_tcp_server() {
   "${PYTHON_BIN}" - "${CVA6_HOST}" "${CVA6_PORT}" <<'PYEOF'
@@ -62,6 +109,35 @@ try:
     raise RuntimeError(f"unexpected response: {msg}")
 except Exception:
     sys.exit(1)
+PYEOF
+}
+
+probe_tcp_server_health() {
+  "${PYTHON_BIN}" - "${CVA6_HOST}" "${CVA6_PORT}" <<'PYEOF'
+import json
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+try:
+  with socket.create_connection((host, port), timeout=1.0) as sock:
+    sock.settimeout(1.0)
+    sock.sendall((json.dumps({"type": "health", "request_id": "probe-mode"}) + "\n").encode("utf-8"))
+    data = b""
+    while b"\n" not in data:
+      chunk = sock.recv(4096)
+      if not chunk:
+        break
+      data += chunk
+  if not data:
+    raise RuntimeError("no response")
+  msg = json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
+  if msg.get("status") != "OK":
+    raise RuntimeError(f"unexpected response: {msg}")
+  print(json.dumps(msg, sort_keys=True))
+except Exception:
+  sys.exit(1)
 PYEOF
 }
 
@@ -100,10 +176,25 @@ fi
 
 mkdir -p "${OUT_DIR}" "${OUT_DIR}/latest"
 
+if [ "${CVA6_RUNTIME_MODE}" = "spike" ] || [ "${CVA6_RUNTIME_MODE}" = "spike_persistent" ]; then
+  if RESOLVED_SPIKE_BIN="$(resolve_effective_spike_bin)"; then
+    export CVA6_SPIKE_BIN="${RESOLVED_SPIKE_BIN}"
+  fi
+  export CVA6_SPIKE_PAYLOAD="$(resolve_effective_spike_payload)"
+fi
+
 echo "=== SHARC + CVA6 Figure 5 over TCP ==="
 echo "OUT_DIR=${OUT_DIR}"
 echo "CONFIG=${CONFIG_HOST}"
 echo "CVA6 backend=${CVA6_HOST}:${CVA6_PORT} mode=${CVA6_RUNTIME_MODE}"
+echo "CVA6 wrapper socket timeout=${CVA6_SOCKET_TIMEOUT_S}s"
+echo "CVA6 request exec timeout=${CVA6_REQUEST_EXEC_TIMEOUT_S}s"
+if [ -n "${CVA6_SPIKE_BIN:-}" ]; then
+  echo "CVA6 spike bin=${CVA6_SPIKE_BIN}"
+fi
+if [ -n "${CVA6_SPIKE_PAYLOAD:-}" ]; then
+  echo "CVA6 spike payload=${CVA6_SPIKE_PAYLOAD}"
+fi
 
 EXPERIMENT_COUNT="$("${PYTHON_BIN}" - "${CONFIG_HOST}" <<'PYEOF'
 import json
@@ -131,11 +222,73 @@ fi
 
 echo "[2/6] Starting or reusing CVA6 TCP server"
 if probe_tcp_server; then
-  echo "Reusing TCP server on ${CVA6_HOST}:${CVA6_PORT}"
+  CURRENT_HEALTH="$(probe_tcp_server_health || echo '{}')"
+  REUSE_CHECK="$("${PYTHON_BIN}" - "${CURRENT_HEALTH}" "${CVA6_RUNTIME_MODE}" "${CVA6_SDK_DIR:-}" "${CVA6_SPIKE_BIN:-}" "${CVA6_SPIKE_PAYLOAD:-}" <<'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+health = json.loads(sys.argv[1])
+expected_mode = sys.argv[2]
+expected_sdk = sys.argv[3]
+expected_spike_bin = sys.argv[4]
+expected_payload = sys.argv[5]
+
+def norm(value: str) -> str:
+    if not value:
+        return ""
+    return str(Path(value).expanduser().resolve(strict=False))
+
+checks = {
+    "runtime_mode": (str(health.get("runtime_mode", "")), expected_mode),
+    "sdk_dir": (norm(str(health.get("sdk_dir", ""))), norm(expected_sdk)),
+    "spike_bin": (norm(str(health.get("spike_bin", ""))), norm(expected_spike_bin)),
+    "spike_payload": (norm(str(health.get("spike_payload", ""))), norm(expected_payload)),
+}
+
+mismatches = []
+for key, (actual, expected) in checks.items():
+    if expected and actual != expected:
+        mismatches.append(f"{key}: actual={actual or '<empty>'} expected={expected}")
+
+if mismatches:
+    print("RESTART")
+    for line in mismatches:
+        print(line)
+else:
+    print("REUSE")
+PYEOF
+)"
+  REUSE_DECISION="$(printf '%s\n' "${REUSE_CHECK}" | sed -n '1p')"
+  if [ "${REUSE_DECISION}" = "REUSE" ]; then
+    echo "Reusing TCP server on ${CVA6_HOST}:${CVA6_PORT}"
+  else
+    echo "Restarting TCP server because health identity does not match current request"
+    printf '%s\n' "${REUSE_CHECK}" | sed -n '2,$p'
+    shutdown_tcp_server || true
+    sleep 0.5
+    CVA6_SERVER_HOST="${CVA6_BIND_HOST}" \
+    CVA6_SERVER_PORT="${CVA6_PORT}" \
+    CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE}" \
+    CVA6_REQUEST_EXEC_TIMEOUT_S="${CVA6_REQUEST_EXEC_TIMEOUT_S}" \
+    "${PYTHON_BIN}" "${TCP_SERVER}" > "${OUT_DIR}/tcp_server.log" 2>&1 &
+    TCP_PID=$!
+    waited=0
+    until probe_tcp_server; do
+      sleep 1
+      waited=$((waited + 1))
+      if [ ${waited} -ge 20 ]; then
+        echo "ERROR: CVA6 TCP server did not restart"
+        cat "${OUT_DIR}/tcp_server.log" || true
+        exit 1
+      fi
+    done
+  fi
 else
   CVA6_SERVER_HOST="${CVA6_BIND_HOST}" \
   CVA6_SERVER_PORT="${CVA6_PORT}" \
   CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE}" \
+  CVA6_REQUEST_EXEC_TIMEOUT_S="${CVA6_REQUEST_EXEC_TIMEOUT_S}" \
   "${PYTHON_BIN}" "${TCP_SERVER}" > "${OUT_DIR}/tcp_server.log" 2>&1 &
   TCP_PID=$!
   waited=0
@@ -158,6 +311,7 @@ docker run \
   -e "CVA6_TRANSPORT=tcp" \
   -e "CVA6_HOST=${CVA6_HOST}" \
   -e "CVA6_PORT=${CVA6_PORT}" \
+  -e "CVA6_SOCKET_TIMEOUT_S=${CVA6_SOCKET_TIMEOUT_S}" \
   -e "SHARC_CVA6_OFFICIAL_MODE=${SHARC_CVA6_OFFICIAL_MODE}" \
   "${DOCKER_ENV_ARGS[@]}" \
   -v "${OUT_DIR}:/home/dcuser/examples/acc_example/experiments" \

@@ -1,0 +1,51 @@
+# T0 Nested Repo Status
+
+date=2026-03-24T09:56:56+01:00
+repo_head=20d185a
+cva6_sdk_head=77fc4a9
+cva6_head=4c02b24fe
+
+## repo git status --short
+ m CVA6_LINUX/cva6
+ m CVA6_LINUX/cva6-sdk
+ ? CVA6_LINUX/deps/osqp
+ m PULP/dory
+ m PULP/gvsoc
+ m PULP/pulp-riscv-gnu-toolchain
+ ? PULP/pulp-sdk
+ M SHARCBRIDGE_CVA6/cva6_runtime_launcher.py
+ M SHARCBRIDGE_CVA6/cva6_tcp_server.py
+ M SHARCBRIDGE_CVA6/run_cva6_figure5_tcp.sh
+ m sharc_original
+?? CVA6_VERILATOR_PROBE/
+?? SHARCBRIDGE_CVA6/PLAN_FIGURE5_SPIKE_HW_TABLE.md
+?? SHARCBRIDGE_CVA6/collect_spike_hw_metrics.py
+?? artifacts_cva6/PLAN_SPIKE_CACHE_SWEEP_FIGURE5.md
+?? artifacts_cva6/PLAN_SPIKE_FIGURE5_EXECUTION_TASKS.md
+?? artifacts_cva6/cache_sweep/
+?? artifacts_cva6/figure5_recovery/
+?? artifacts_cva6/spike_hw_metrics_validation.md
+?? artifacts_cva6/tmp/
+
+## cva6-sdk git status --short
+ M configs/buildroot64_defconfig
+ m riscv-isa-sim
+ m vitetris
+?? hello
+?? hello.c
+?? rootfs/usr/bin/
+
+## cva6 git status --short
+ M corev_apu/bootrom/Makefile
+ M corev_apu/bootrom/ariane.dts
+ M corev_apu/bootrom/bootrom.S
+ M corev_apu/bootrom/bootrom.h
+ M corev_apu/bootrom/bootrom.sv
+ M corev_apu/tb/ariane_gate_tb.sv
+ M corev_apu/tb/ariane_tb.cpp
+ M corev_apu/tb/ariane_tb.sv
+ M corev_apu/tb/dpi/SimJTAG.cc
+ M docs/01_cva6_user/user_cfg_doc.rst
+ ? docs/riscv-isa/riscv-isa-manual
+?? iti.trace
+?? verif/sim/iti.trace

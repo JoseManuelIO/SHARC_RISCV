@@ -1,0 +1,11 @@
+aa433d1c5cfbd72b64ff3f92f2ffa2e02ea7089b buildroot (2021.08)
+be245acfffa297b5ed4e0c7bb473a6bd55231bf8 opensbi (v0.9-166-gbe245acf)
+M	fesvr/device.h
+cc38be9991f3abd0831d141ebff8b4fd7a4990ea riscv-isa-sim (v1.0.0-610-gcc38be99)
+fbd7e037ec947c6e9dddc9b78c1cd6bc0fce9993 riscv-tests (remotes/origin/debug-clear-satp-40-gfbd7e03)
+f6220650cabb75933abf932c8cbed40363e44f0a u-boot (remotes/origin/cva6)
+M	config.mk
+M	src/config.h
+M	src/src-conf.mk
+Removing tetris
+a922c8b8d082ba0af056d2650950e3be0f5a7b90 vitetris (v0.57.2-12-ga922c8b)
