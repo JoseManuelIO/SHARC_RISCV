@@ -14,6 +14,7 @@ import json
 import os
 import re
 import selectors
+import shlex
 import subprocess
 import threading
 import time
@@ -38,11 +39,15 @@ if not DEFAULT_SPIKE_BIN.is_file():
         DEFAULT_SPIKE_BIN = repo_spike_bin
 SPIKE_BIN = Path(os.environ.get("CVA6_SPIKE_BIN", DEFAULT_SPIKE_BIN))
 SPIKE_PAYLOAD = Path(os.environ.get("CVA6_SPIKE_PAYLOAD", SDK_DIR / "install64" / "spike_fw_payload.elf"))
+SPIKE_CACHE_ARGS_RAW = os.environ.get("SPIKE_CACHE_ARGS", "").strip()
 RUNTIME_LOG_DIR = Path(os.environ.get("CVA6_RUNTIME_LOG_DIR", "/tmp/sharcbridge_cva6_runtime"))
 SPIKE_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_TIMEOUT_S", "120"))
 SPIKE_BOOT_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_BOOT_TIMEOUT_S", "30"))
 SPIKE_READY_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_READY_TIMEOUT_S", "60"))
 SPIKE_BOOT_IDLE_S = float(os.environ.get("CVA6_SPIKE_BOOT_IDLE_S", "10.0"))
+SPIKE_SHELL_READY_ATTEMPTS = int(os.environ.get("CVA6_SPIKE_SHELL_READY_ATTEMPTS", "3"))
+SPIKE_SHELL_PROMPT_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_SHELL_PROMPT_TIMEOUT_S", "10"))
+SPIKE_SHELL_MARKER_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_SHELL_MARKER_TIMEOUT_S", "15"))
 TARGET_RUNTIME_BIN = os.environ.get("CVA6_TARGET_RUNTIME_BIN", "/usr/bin/sharc_cva6_acc_runtime")
 TARGET_BASE_CONFIG = os.environ.get(
     "CVA6_TARGET_BASE_CONFIG",
@@ -121,7 +126,7 @@ class PersistentSpikeSession:
         self.close()
         self.session_log = self.session_log_path.open("a", encoding="utf-8")
         self.proc = subprocess.Popen(
-            [str(SPIKE_BIN), str(SPIKE_PAYLOAD)],
+            _build_spike_host_command(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -321,6 +326,7 @@ class CVA6RuntimeLauncher:
                     "sdk_dir": str(SDK_DIR.resolve()),
                     "spike_bin": str(SPIKE_BIN.resolve(strict=False)),
                     "spike_payload": str(SPIKE_PAYLOAD.resolve(strict=False)),
+                    "spike_cache_args": SPIKE_CACHE_ARGS_RAW,
                     "spike_bin_exists": SPIKE_BIN.is_file(),
                     "spike_payload_exists": SPIKE_PAYLOAD.is_file(),
                     "target_runtime_bin": TARGET_RUNTIME_BIN,
@@ -447,6 +453,7 @@ class CVA6RuntimeLauncher:
                 "backend_mode": self.mode,
                 "launcher": "cva6_runtime_launcher",
                 "log_path": str(log_path),
+                "spike_cache_args": SPIKE_CACHE_ARGS_RAW,
                 "runtime_metadata": metadata,
             },
         }
@@ -493,9 +500,17 @@ def _validate_optional_stage_hash(stage_text: str, marker_name: str, expected_ha
         raise RuntimeError(error_message)
 
 
+def _build_spike_host_command() -> list[str]:
+    command = [str(SPIKE_BIN)]
+    if SPIKE_CACHE_ARGS_RAW:
+        command.extend(shlex.split(SPIKE_CACHE_ARGS_RAW))
+    command.append(str(SPIKE_PAYLOAD))
+    return command
+
+
 def _run_spike_oneshot_command(command: str, end_markers: list[str], log_path: Path) -> str:
     proc = subprocess.Popen(
-        [str(SPIKE_BIN), str(SPIKE_PAYLOAD)],
+        _build_spike_host_command(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -650,22 +665,23 @@ def _wait_for_boot_ready(read_until_fn, read_until_idle_fn) -> str:
     )
 
 
-def _ensure_interactive_shell_ready(proc: subprocess.Popen, read_until_fn, attempts: int = 3) -> None:
+def _ensure_interactive_shell_ready(proc: subprocess.Popen, read_until_fn, attempts: int | None = None) -> None:
     if proc.stdin is None:
         raise RuntimeError("Spike stdin is not available to establish shell readiness")
 
-    for attempt in range(attempts):
+    max_attempts = attempts if attempts is not None else SPIKE_SHELL_READY_ATTEMPTS
+    for attempt in range(max_attempts):
         ready_marker = f"__SHARCBRIDGE_SHELL_READY_{attempt}__"
         proc.stdin.write(b"\n")
         proc.stdin.flush()
         try:
-            read_until_fn([SHELL_PROMPT], 10)
+            read_until_fn([SHELL_PROMPT], SPIKE_SHELL_PROMPT_TIMEOUT_S)
         except RuntimeError:
             pass
         proc.stdin.write(f"echo {ready_marker}\n".encode("utf-8"))
         proc.stdin.flush()
         try:
-            read_until_fn([ready_marker], 15)
+            read_until_fn([ready_marker], SPIKE_SHELL_MARKER_TIMEOUT_S)
             return
         except RuntimeError:
             continue
