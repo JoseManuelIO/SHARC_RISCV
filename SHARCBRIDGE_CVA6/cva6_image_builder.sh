@@ -3,7 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${ROOT_DIR}/.." && pwd)"
-SDK_DIR="${REPO_DIR}/CVA6_LINUX/cva6-sdk"
+KNOWN_GOOD_SDK_DIR="${CVA6_KNOWN_GOOD_SDK_DIR:-/tmp/cva6-sdk-clean-20260324-r1-2}"
+REPO_SDK_DIR="${REPO_DIR}/CVA6_LINUX/cva6-sdk"
+if [ -n "${CVA6_SDK_DIR:-}" ]; then
+  SDK_DIR="${CVA6_SDK_DIR}"
+elif [ -d "${KNOWN_GOOD_SDK_DIR}" ]; then
+  SDK_DIR="${KNOWN_GOOD_SDK_DIR}"
+else
+  SDK_DIR="${REPO_SDK_DIR}"
+fi
 BUILD_DIR="${ROOT_DIR}/build"
 PATCHED_OSQP_SRC="${BUILD_DIR}/osqp-fixed-interval-src"
 PATCH_INTERVAL="${CVA6_OSQP_ADAPTIVE_RHO_INTERVAL:-25}"

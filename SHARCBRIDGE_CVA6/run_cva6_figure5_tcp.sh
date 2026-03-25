@@ -16,11 +16,36 @@ CONFIG_DOCKER="/home/dcuser/examples/acc_example/simulation_configs/${CONFIG_NAM
 WRAPPER_HOST="${SCRIPT_DIR}/cva6_controller_wrapper.py"
 TCP_SERVER="${SCRIPT_DIR}/cva6_tcp_server.py"
 IMAGE_BUILDER="${SCRIPT_DIR}/cva6_image_builder.sh"
+KNOWN_GOOD_SDK_DIR="${CVA6_KNOWN_GOOD_SDK_DIR:-/tmp/cva6-sdk-clean-20260324-r1-2}"
+REPO_SDK_DIR="${REPO_DIR}/CVA6_LINUX/cva6-sdk"
+
+resolve_default_sdk_dir() {
+  if [ -n "${CVA6_SDK_DIR:-}" ]; then
+    echo "${CVA6_SDK_DIR}"
+    return 0
+  fi
+
+  if [ -d "${KNOWN_GOOD_SDK_DIR}" ]; then
+    echo "${KNOWN_GOOD_SDK_DIR}"
+    return 0
+  fi
+
+  echo "${REPO_SDK_DIR}"
+}
 
 CVA6_HOST="${CVA6_HOST:-127.0.0.1}"
 CVA6_PORT="${CVA6_PORT:-5001}"
 CVA6_BIND_HOST="${CVA6_BIND_HOST:-0.0.0.0}"
 CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE:-spike_persistent}"
+CVA6_SDK_DIR="$(resolve_default_sdk_dir)"
+CVA6_SKIP_BUILD="${CVA6_SKIP_BUILD:-}"
+if [ -z "${CVA6_SKIP_BUILD}" ]; then
+  if [ "${CVA6_SDK_DIR}" = "${KNOWN_GOOD_SDK_DIR}" ]; then
+    CVA6_SKIP_BUILD="1"
+  else
+    CVA6_SKIP_BUILD="0"
+  fi
+fi
 CVA6_REQUEST_EXEC_TIMEOUT_S="${CVA6_REQUEST_EXEC_TIMEOUT_S:-${CVA6_SPIKE_TIMEOUT_S:-300}}"
 if [ -n "${CVA6_SOCKET_TIMEOUT_S:-}" ]; then
   CVA6_SOCKET_TIMEOUT_S="${CVA6_SOCKET_TIMEOUT_S}"
@@ -177,6 +202,7 @@ fi
 mkdir -p "${OUT_DIR}" "${OUT_DIR}/latest"
 
 if [ "${CVA6_RUNTIME_MODE}" = "spike" ] || [ "${CVA6_RUNTIME_MODE}" = "spike_persistent" ]; then
+  export CVA6_SDK_DIR
   if RESOLVED_SPIKE_BIN="$(resolve_effective_spike_bin)"; then
     export CVA6_SPIKE_BIN="${RESOLVED_SPIKE_BIN}"
   fi
@@ -187,6 +213,7 @@ echo "=== SHARC + CVA6 Figure 5 over TCP ==="
 echo "OUT_DIR=${OUT_DIR}"
 echo "CONFIG=${CONFIG_HOST}"
 echo "CVA6 backend=${CVA6_HOST}:${CVA6_PORT} mode=${CVA6_RUNTIME_MODE}"
+echo "CVA6 sdk dir=${CVA6_SDK_DIR}"
 echo "CVA6 wrapper socket timeout=${CVA6_SOCKET_TIMEOUT_S}s"
 echo "CVA6 request exec timeout=${CVA6_REQUEST_EXEC_TIMEOUT_S}s"
 if [ -n "${CVA6_SPIKE_BIN:-}" ]; then
@@ -209,7 +236,7 @@ if [ "${EXPERIMENT_COUNT}" -ne 2 ]; then
   exit 1
 fi
 
-if [ "${CVA6_SKIP_BUILD:-0}" != "1" ]; then
+if [ "${CVA6_SKIP_BUILD}" != "1" ]; then
   echo "[1/6] Building CVA6 payload"
   if ! bash "${IMAGE_BUILDER}" > "${OUT_DIR}/image_build.log" 2>&1; then
     echo "ERROR: cva6_image_builder.sh failed"

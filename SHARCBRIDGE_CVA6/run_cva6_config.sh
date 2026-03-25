@@ -12,7 +12,7 @@ fi
 
 CVA6_HOST="${CVA6_HOST:-127.0.0.1}"
 CVA6_PORT="${CVA6_PORT:-5001}"
-CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE:-spike}"
+CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE:-spike_persistent}"
 RUN_BASE="${CVA6_RUN_BASE:-/tmp/sharc_cva6_runs}"
 TIMESTAMP="$(date +%Y-%m-%d--%H-%M-%S)"
 RUN_DIR="${RUN_BASE}/${TIMESTAMP}-cva6_short"

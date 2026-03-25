@@ -27,8 +27,16 @@ from pathlib import Path
 RUNTIME_MODE = os.environ.get("CVA6_RUNTIME_MODE", "mock").strip().lower()
 ROOT_DIR = Path(__file__).resolve().parent
 REPO_DIR = ROOT_DIR.parent
-SDK_DIR = Path(os.environ.get("CVA6_SDK_DIR", REPO_DIR / "CVA6_LINUX" / "cva6-sdk"))
-SPIKE_BIN = Path(os.environ.get("CVA6_SPIKE_BIN", SDK_DIR / "install64" / "bin" / "spike"))
+KNOWN_GOOD_SDK_DIR = Path(os.environ.get("CVA6_KNOWN_GOOD_SDK_DIR", "/tmp/cva6-sdk-clean-20260324-r1-2"))
+REPO_SDK_DIR = REPO_DIR / "CVA6_LINUX" / "cva6-sdk"
+DEFAULT_SDK_DIR = KNOWN_GOOD_SDK_DIR if KNOWN_GOOD_SDK_DIR.is_dir() else REPO_SDK_DIR
+SDK_DIR = Path(os.environ.get("CVA6_SDK_DIR", DEFAULT_SDK_DIR))
+DEFAULT_SPIKE_BIN = SDK_DIR / "install64" / "bin" / "spike"
+if not DEFAULT_SPIKE_BIN.is_file():
+    repo_spike_bin = REPO_SDK_DIR / "install64" / "bin" / "spike"
+    if repo_spike_bin.is_file():
+        DEFAULT_SPIKE_BIN = repo_spike_bin
+SPIKE_BIN = Path(os.environ.get("CVA6_SPIKE_BIN", DEFAULT_SPIKE_BIN))
 SPIKE_PAYLOAD = Path(os.environ.get("CVA6_SPIKE_PAYLOAD", SDK_DIR / "install64" / "spike_fw_payload.elf"))
 RUNTIME_LOG_DIR = Path(os.environ.get("CVA6_RUNTIME_LOG_DIR", "/tmp/sharcbridge_cva6_runtime"))
 SPIKE_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_TIMEOUT_S", "120"))
