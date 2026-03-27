@@ -3,15 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${ROOT_DIR}/.." && pwd)"
-KNOWN_GOOD_SDK_DIR="${CVA6_KNOWN_GOOD_SDK_DIR:-/tmp/cva6-sdk-clean-20260324-r1-2}"
 REPO_SDK_DIR="${REPO_DIR}/CVA6_LINUX/cva6-sdk"
 if [ -n "${CVA6_SDK_DIR:-}" ]; then
   SDK_DIR="${CVA6_SDK_DIR}"
-elif [ -d "${KNOWN_GOOD_SDK_DIR}" ]; then
-  SDK_DIR="${KNOWN_GOOD_SDK_DIR}"
 else
   SDK_DIR="${REPO_SDK_DIR}"
 fi
+REBUILD_BOOT_TRIPLET="${CVA6_REBUILD_BOOT_TRIPLET:-0}"
 BUILD_DIR="${ROOT_DIR}/build"
 PATCHED_OSQP_SRC="${BUILD_DIR}/osqp-fixed-interval-src"
 PATCH_INTERVAL="${CVA6_OSQP_ADAPTIVE_RHO_INTERVAL:-25}"
@@ -85,9 +83,15 @@ riscv64-linux-g++ -O2 -std=c++20 \
 cp "${OUT_BIN}" "${TARGET_BIN_DIR}/sharc_cva6_acc_runtime"
 cp "${REPO_DIR}/sharc_original/examples/acc_example/base_config.json" "${TARGET_CONFIG}"
 
-make -C "${SDK_DIR}/buildroot" linux-rebuild-with-initramfs -j"$(nproc)"
-cp "${SDK_DIR}/buildroot/output/images/vmlinux" "${SDK_DIR}/install64/vmlinux"
-(cd "${SDK_DIR}" && make spike_payload)
+if [ "${REBUILD_BOOT_TRIPLET}" = "1" ]; then
+  make -C "${SDK_DIR}/buildroot" linux-rebuild-with-initramfs -j"$(nproc)"
+  cp "${SDK_DIR}/buildroot/output/images/vmlinux" "${SDK_DIR}/install64/vmlinux"
+  (cd "${SDK_DIR}" && make spike_payload)
+else
+  echo "CVA6 boot triplet rebuild skipped."
+  echo "Runtime/config were refreshed only in ${SDK_DIR}/buildroot/output/target."
+  echo "Set CVA6_REBUILD_BOOT_TRIPLET=1 only when intentionally rebuilding install64/."
+fi
 
 echo "CVA6 image build PASS"
 echo "binary=${OUT_BIN}"

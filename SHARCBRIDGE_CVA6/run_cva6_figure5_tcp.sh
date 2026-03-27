@@ -10,14 +10,23 @@ else
   PYTHON_BIN="python3"
 fi
 
-CONFIG_NAME="${1:-cva6_figure5.json}"
-CONFIG_HOST="${SCRIPT_DIR}/${CONFIG_NAME}"
+DEFAULT_CONFIG_NAME="${1:-cva6_figure5.json}"
+if [ -n "${CVA6_CONFIG_HOST:-}" ]; then
+  CONFIG_HOST="${CVA6_CONFIG_HOST}"
+  CONFIG_NAME="${CVA6_CONFIG_NAME:-$(basename "${CONFIG_HOST}")}"
+else
+  CONFIG_NAME="${DEFAULT_CONFIG_NAME}"
+  CONFIG_HOST="${SCRIPT_DIR}/${CONFIG_NAME}"
+fi
 CONFIG_DOCKER="/home/dcuser/examples/acc_example/simulation_configs/${CONFIG_NAME}"
 WRAPPER_HOST="${SCRIPT_DIR}/cva6_controller_wrapper.py"
 TCP_SERVER="${SCRIPT_DIR}/cva6_tcp_server.py"
 IMAGE_BUILDER="${SCRIPT_DIR}/cva6_image_builder.sh"
-KNOWN_GOOD_SDK_DIR="${CVA6_KNOWN_GOOD_SDK_DIR:-/tmp/cva6-sdk-clean-20260324-r1-2}"
 REPO_SDK_DIR="${REPO_DIR}/CVA6_LINUX/cva6-sdk"
+KNOWN_GOOD_PAYLOAD_SHA256="6510db2d5b159f662f0ef4905357390e84033a5e2206fa2c1d02aa535e6584ea"
+KNOWN_GOOD_VMLINUX_SHA256="fd770e7f592532a4fa8bafc469df9c740f5ec4ab375747243f414940cac14d8a"
+KNOWN_GOOD_IMAGE_SHA256="fd27ffa1d3554252e9dfa5d2de3c9eb3f05979c74c5e905f2d8935ae46b26e4a"
+CVA6_ALLOW_UNVERIFIED_TRIPLET="${CVA6_ALLOW_UNVERIFIED_TRIPLET:-0}"
 
 resolve_default_sdk_dir() {
   if [ -n "${CVA6_SDK_DIR:-}" ]; then
@@ -25,12 +34,66 @@ resolve_default_sdk_dir() {
     return 0
   fi
 
-  if [ -d "${KNOWN_GOOD_SDK_DIR}" ]; then
-    echo "${KNOWN_GOOD_SDK_DIR}"
+  echo "${REPO_SDK_DIR}"
+}
+
+sha256_of_file() {
+  local path="$1"
+  sha256sum "${path}" | awk '{print $1}'
+}
+
+validate_sdk_triplet() {
+  local sdk_dir="$1"
+  local payload="${sdk_dir}/install64/spike_fw_payload.elf"
+  local vmlinux="${sdk_dir}/install64/vmlinux"
+  local image="${sdk_dir}/install64/Image"
+  local payload_sha=""
+  local vmlinux_sha=""
+  local image_sha=""
+
+  [ -f "${payload}" ] || { echo "ERROR: Missing payload ${payload}" >&2; return 1; }
+  [ -f "${vmlinux}" ] || { echo "ERROR: Missing kernel ${vmlinux}" >&2; return 1; }
+  [ -f "${image}" ] || { echo "ERROR: Missing image ${image}" >&2; return 1; }
+
+  payload_sha="$(sha256_of_file "${payload}")"
+  vmlinux_sha="$(sha256_of_file "${vmlinux}")"
+  image_sha="$(sha256_of_file "${image}")"
+
+  if [ "${payload_sha}" = "${KNOWN_GOOD_PAYLOAD_SHA256}" ] && \
+     [ "${vmlinux_sha}" = "${KNOWN_GOOD_VMLINUX_SHA256}" ] && \
+     [ "${image_sha}" = "${KNOWN_GOOD_IMAGE_SHA256}" ]; then
     return 0
   fi
 
-  echo "${REPO_SDK_DIR}"
+  if [ "${CVA6_ALLOW_UNVERIFIED_TRIPLET}" = "1" ]; then
+    echo "WARN: Running with unverified install64 triplet in ${sdk_dir}" >&2
+    echo "WARN: payload=${payload_sha} vmlinux=${vmlinux_sha} image=${image_sha}" >&2
+    return 0
+  fi
+
+  cat >&2 <<EOF
+ERROR: Refusing to run with an unverified CVA6 install64 triplet.
+SDK dir: ${sdk_dir}
+payload sha256: ${payload_sha}
+vmlinux sha256: ${vmlinux_sha}
+Image sha256: ${image_sha}
+
+Expected known-good hashes:
+payload: ${KNOWN_GOOD_PAYLOAD_SHA256}
+vmlinux: ${KNOWN_GOOD_VMLINUX_SHA256}
+Image: ${KNOWN_GOOD_IMAGE_SHA256}
+
+If you intentionally want to test a different boot triplet, rerun with:
+  CVA6_ALLOW_UNVERIFIED_TRIPLET=1
+EOF
+  return 1
+}
+
+sdk_has_ready_runtime_assets() {
+  local sdk_dir="$1"
+  [ -f "${sdk_dir}/install64/spike_fw_payload.elf" ] || return 1
+  [ -f "${sdk_dir}/buildroot/output/target/usr/bin/sharc_cva6_acc_runtime" ] || return 1
+  [ -f "${sdk_dir}/buildroot/output/target/usr/share/sharcbridge_cva6/base_config.json" ] || return 1
 }
 
 CVA6_HOST="${CVA6_HOST:-127.0.0.1}"
@@ -40,7 +103,7 @@ CVA6_RUNTIME_MODE="${CVA6_RUNTIME_MODE:-spike_persistent}"
 CVA6_SDK_DIR="$(resolve_default_sdk_dir)"
 CVA6_SKIP_BUILD="${CVA6_SKIP_BUILD:-}"
 if [ -z "${CVA6_SKIP_BUILD}" ]; then
-  if [ "${CVA6_SDK_DIR}" = "${KNOWN_GOOD_SDK_DIR}" ]; then
+  if sdk_has_ready_runtime_assets "${CVA6_SDK_DIR}"; then
     CVA6_SKIP_BUILD="1"
   else
     CVA6_SKIP_BUILD="0"
@@ -100,12 +163,11 @@ resolve_effective_spike_payload() {
     return 0
   fi
 
-  if [ -n "${CVA6_SDK_DIR:-}" ]; then
+  if [ -n "${CVA6_SDK_DIR:-}" ] && [ -f "${CVA6_SDK_DIR}/install64/spike_fw_payload.elf" ]; then
     echo "${CVA6_SDK_DIR}/install64/spike_fw_payload.elf"
     return 0
   fi
-
-  echo "${REPO_DIR}/CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf"
+  return 1
 }
 
 probe_tcp_server() {
@@ -203,10 +265,15 @@ mkdir -p "${OUT_DIR}" "${OUT_DIR}/latest"
 
 if [ "${CVA6_RUNTIME_MODE}" = "spike" ] || [ "${CVA6_RUNTIME_MODE}" = "spike_persistent" ]; then
   export CVA6_SDK_DIR
+  validate_sdk_triplet "${CVA6_SDK_DIR}"
   if RESOLVED_SPIKE_BIN="$(resolve_effective_spike_bin)"; then
     export CVA6_SPIKE_BIN="${RESOLVED_SPIKE_BIN}"
   fi
-  export CVA6_SPIKE_PAYLOAD="$(resolve_effective_spike_payload)"
+  if ! RESOLVED_SPIKE_PAYLOAD="$(resolve_effective_spike_payload)"; then
+    echo "ERROR: Could not resolve Spike payload inside ${CVA6_SDK_DIR}" >&2
+    exit 1
+  fi
+  export CVA6_SPIKE_PAYLOAD="${RESOLVED_SPIKE_PAYLOAD}"
 fi
 
 echo "=== SHARC + CVA6 Figure 5 over TCP ==="
@@ -233,6 +300,19 @@ PYEOF
 )"
 if [ "${EXPERIMENT_COUNT}" -ne 2 ]; then
   echo "ERROR: Expected 2 experiments in ${CONFIG_HOST}, got ${EXPERIMENT_COUNT}"
+  exit 1
+fi
+
+RUNNABLE_EXPERIMENT_COUNT="$("${PYTHON_BIN}" - "${CONFIG_HOST}" <<'PYEOF'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+print(sum(0 if item.get("skip", False) else 1 for item in data))
+PYEOF
+)"
+if [ "${RUNNABLE_EXPERIMENT_COUNT}" -lt 1 ]; then
+  echo "ERROR: Expected at least 1 runnable experiment in ${CONFIG_HOST}, got ${RUNNABLE_EXPERIMENT_COUNT}"
   exit 1
 fi
 
@@ -351,8 +431,8 @@ docker run \
 
 echo "[4/6] Checking outputs"
 DATA_COUNT=$(find "${OUT_DIR}" -name "simulation_data_incremental.json" | wc -l | tr -d ' ')
-if [ "${DATA_COUNT}" -lt 2 ]; then
-  echo "ERROR: Expected at least 2 simulation_data_incremental.json outputs, got ${DATA_COUNT}"
+if [ "${DATA_COUNT}" -lt "${RUNNABLE_EXPERIMENT_COUNT}" ]; then
+  echo "ERROR: Expected at least ${RUNNABLE_EXPERIMENT_COUNT} simulation_data_incremental.json outputs, got ${DATA_COUNT}"
   find "${OUT_DIR}" -name "simulation_data_incremental.json" -print || true
   exit 1
 fi

@@ -28,10 +28,8 @@ from pathlib import Path
 RUNTIME_MODE = os.environ.get("CVA6_RUNTIME_MODE", "mock").strip().lower()
 ROOT_DIR = Path(__file__).resolve().parent
 REPO_DIR = ROOT_DIR.parent
-KNOWN_GOOD_SDK_DIR = Path(os.environ.get("CVA6_KNOWN_GOOD_SDK_DIR", "/tmp/cva6-sdk-clean-20260324-r1-2"))
 REPO_SDK_DIR = REPO_DIR / "CVA6_LINUX" / "cva6-sdk"
-DEFAULT_SDK_DIR = KNOWN_GOOD_SDK_DIR if KNOWN_GOOD_SDK_DIR.is_dir() else REPO_SDK_DIR
-SDK_DIR = Path(os.environ.get("CVA6_SDK_DIR", DEFAULT_SDK_DIR))
+SDK_DIR = Path(os.environ.get("CVA6_SDK_DIR", REPO_SDK_DIR))
 DEFAULT_SPIKE_BIN = SDK_DIR / "install64" / "bin" / "spike"
 if not DEFAULT_SPIKE_BIN.is_file():
     repo_spike_bin = REPO_SDK_DIR / "install64" / "bin" / "spike"
@@ -39,6 +37,14 @@ if not DEFAULT_SPIKE_BIN.is_file():
         DEFAULT_SPIKE_BIN = repo_spike_bin
 SPIKE_BIN = Path(os.environ.get("CVA6_SPIKE_BIN", DEFAULT_SPIKE_BIN))
 SPIKE_PAYLOAD = Path(os.environ.get("CVA6_SPIKE_PAYLOAD", SDK_DIR / "install64" / "spike_fw_payload.elf"))
+ALLOW_UNVERIFIED_TRIPLET = os.environ.get("CVA6_ALLOW_UNVERIFIED_TRIPLET", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+KNOWN_GOOD_PAYLOAD_SHA256 = "6510db2d5b159f662f0ef4905357390e84033a5e2206fa2c1d02aa535e6584ea"
+KNOWN_GOOD_VMLINUX_SHA256 = "fd770e7f592532a4fa8bafc469df9c740f5ec4ab375747243f414940cac14d8a"
+KNOWN_GOOD_IMAGE_SHA256 = "fd27ffa1d3554252e9dfa5d2de3c9eb3f05979c74c5e905f2d8935ae46b26e4a"
 SPIKE_CACHE_ARGS_RAW = os.environ.get("SPIKE_CACHE_ARGS", "").strip()
 RUNTIME_LOG_DIR = Path(os.environ.get("CVA6_RUNTIME_LOG_DIR", "/tmp/sharcbridge_cva6_runtime"))
 SPIKE_TIMEOUT_S = float(os.environ.get("CVA6_SPIKE_TIMEOUT_S", "120"))
@@ -56,6 +62,10 @@ TARGET_BASE_CONFIG = os.environ.get(
 TARGET_TMP_DIR = os.environ.get("CVA6_TARGET_TMP_DIR", "/tmp/sharcbridge_cva6")
 STAGED_RUNTIME_BIN = os.environ.get("CVA6_STAGED_RUNTIME_BIN", f"{TARGET_TMP_DIR}/sharc_cva6_acc_runtime")
 STAGED_BASE_CONFIG = os.environ.get("CVA6_STAGED_BASE_CONFIG", f"{TARGET_TMP_DIR}/base_config.json")
+TARGET_LIBSTDCXX = os.environ.get("CVA6_TARGET_LIBSTDCXX", "/usr/lib/libstdc++.so.6")
+TARGET_LIBGCC = os.environ.get("CVA6_TARGET_LIBGCC", "/lib/libgcc_s.so.1")
+STAGED_LIBSTDCXX = os.environ.get("CVA6_STAGED_LIBSTDCXX", f"{TARGET_TMP_DIR}/libstdc++.so.6")
+STAGED_LIBGCC = os.environ.get("CVA6_STAGED_LIBGCC", f"{TARGET_TMP_DIR}/libgcc_s.so.1")
 HOST_RUNTIME_BIN = Path(
     os.environ.get(
         "CVA6_HOST_RUNTIME_BIN",
@@ -66,6 +76,18 @@ HOST_BASE_CONFIG = Path(
     os.environ.get(
         "CVA6_HOST_BASE_CONFIG",
         SDK_DIR / "buildroot" / "output" / "target" / "usr" / "share" / "sharcbridge_cva6" / "base_config.json",
+    )
+)
+HOST_LIBSTDCXX = Path(
+    os.environ.get(
+        "CVA6_HOST_LIBSTDCXX",
+        SDK_DIR / "buildroot" / "output" / "target" / "usr" / "lib" / "libstdc++.so.6",
+    )
+)
+HOST_LIBGCC = Path(
+    os.environ.get(
+        "CVA6_HOST_LIBGCC",
+        SDK_DIR / "buildroot" / "output" / "target" / "lib" / "libgcc_s.so.1",
     )
 )
 SHELL_PROMPT = os.environ.get("CVA6_SPIKE_SHELL_PROMPT", "# ")
@@ -94,10 +116,44 @@ def _sha256_file(path: Path) -> str:
 
 HOST_RUNTIME_BIN_B64 = _load_host_asset_b64(HOST_RUNTIME_BIN)
 HOST_BASE_CONFIG_B64 = _load_host_asset_b64(HOST_BASE_CONFIG)
+HOST_LIBSTDCXX_B64 = _load_host_asset_b64(HOST_LIBSTDCXX)
+HOST_LIBGCC_B64 = _load_host_asset_b64(HOST_LIBGCC)
 HOST_RUNTIME_BIN_SHA256 = _sha256_file(HOST_RUNTIME_BIN)
 HOST_BASE_CONFIG_SHA256 = _sha256_file(HOST_BASE_CONFIG)
+HOST_LIBSTDCXX_SHA256 = _sha256_file(HOST_LIBSTDCXX)
+HOST_LIBGCC_SHA256 = _sha256_file(HOST_LIBGCC)
 HOST_RUNTIME_BIN_SIZE = HOST_RUNTIME_BIN.stat().st_size
 HOST_BASE_CONFIG_SIZE = HOST_BASE_CONFIG.stat().st_size
+HOST_LIBSTDCXX_SIZE = HOST_LIBSTDCXX.stat().st_size
+HOST_LIBGCC_SIZE = HOST_LIBGCC.stat().st_size
+
+
+def _validate_known_good_triplet() -> None:
+    triplet = (
+        ("spike_fw_payload.elf", SDK_DIR / "install64" / "spike_fw_payload.elf", KNOWN_GOOD_PAYLOAD_SHA256),
+        ("vmlinux", SDK_DIR / "install64" / "vmlinux", KNOWN_GOOD_VMLINUX_SHA256),
+        ("Image", SDK_DIR / "install64" / "Image", KNOWN_GOOD_IMAGE_SHA256),
+    )
+    mismatches: list[str] = []
+    for name, path, expected in triplet:
+        if not path.is_file():
+            mismatches.append(f"{name}: missing ({path})")
+            continue
+        actual = _sha256_file(path)
+        if actual != expected:
+            mismatches.append(f"{name}: {actual} != {expected}")
+    if mismatches and not ALLOW_UNVERIFIED_TRIPLET:
+        joined = "; ".join(mismatches)
+        raise RuntimeError(
+            "Refusing to start CVA6 launcher with an unverified install64 triplet in "
+            f"{SDK_DIR}. Mismatches: {joined}. "
+            "Set CVA6_ALLOW_UNVERIFIED_TRIPLET=1 only for deliberate experiments."
+        )
+    if not SPIKE_PAYLOAD.is_file():
+        raise RuntimeError(f"Missing Spike payload: {SPIKE_PAYLOAD}")
+
+
+_validate_known_good_triplet()
 
 
 @dataclass
@@ -204,6 +260,22 @@ class PersistentSpikeSession:
             marker_name="STAGE_CONFIG_SHA",
             expected_hash=HOST_BASE_CONFIG_SHA256,
             error_message="Guest config staging hash did not match the host config",
+        )
+        if "STAGE_LIBSTDCXX_READY=1" not in stage_text:
+            raise RuntimeError("Guest runtime staging did not provide a usable libstdc++.so.6")
+        if "STAGE_LIBGCC_READY=1" not in stage_text:
+            raise RuntimeError("Guest runtime staging did not provide a usable libgcc_s.so.1")
+        _validate_optional_stage_hash(
+            stage_text,
+            marker_name="STAGE_LIBSTDCXX_SHA",
+            expected_hash=HOST_LIBSTDCXX_SHA256,
+            error_message="Guest libstdc++.so.6 staging hash did not match the host library",
+        )
+        _validate_optional_stage_hash(
+            stage_text,
+            marker_name="STAGE_LIBGCC_SHA",
+            expected_hash=HOST_LIBGCC_SHA256,
+            error_message="Guest libgcc_s.so.1 staging hash did not match the host library",
         )
         self._guest_assets_ready = True
 
@@ -477,6 +549,7 @@ def _build_spike_command(snapshot_payload: dict, guest_snapshot_path: str, begin
         f'[ -x "$RUNTIME_BIN" ] || RUNTIME_BIN="{STAGED_RUNTIME_BIN}"\n'
         f'BASE_CONFIG="{TARGET_BASE_CONFIG}"\n'
         f'[ -e "$BASE_CONFIG" ] || BASE_CONFIG="{STAGED_BASE_CONFIG}"\n'
+        f'if [ "$RUNTIME_BIN" = "{STAGED_RUNTIME_BIN}" ]; then export LD_LIBRARY_PATH="{TARGET_TMP_DIR}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}"; fi\n'
         f"echo {begin_marker}\n"
         f'"$RUNTIME_BIN" "$BASE_CONFIG" {guest_snapshot_path}\n'
         f"echo {end_marker}\n"
@@ -730,8 +803,46 @@ def _build_guest_asset_stage_command(begin_marker: str, end_marker: str) -> str:
         "fi\n"
         'rm -f "$CONFIG_B64" "$CONFIG_TMP"\n'
         "fi\n"
+        f'if [ ! -e "{TARGET_LIBSTDCXX}" ] && [ ! -e "{STAGED_LIBSTDCXX}" ]; then\n'
+        f'LIBSTDCXX_B64="{STAGED_LIBSTDCXX}.b64"\n'
+        f'LIBSTDCXX_TMP="{STAGED_LIBSTDCXX}.tmp"\n'
+        f'rm -f "$LIBSTDCXX_B64" "$LIBSTDCXX_TMP"\n'
+        f"{_build_base64_heredoc_commands(HOST_LIBSTDCXX_B64, '$LIBSTDCXX_B64', 'SHARCBRIDGE_LIBSTDCXX_B64')}"
+        'if base64 -d "$LIBSTDCXX_B64" > "$LIBSTDCXX_TMP"; then\n'
+        f'LIBSTDCXX_SHA="$(sha256sum "$LIBSTDCXX_TMP" | awk \'{{print $1}}\')"\n'
+        f'LIBSTDCXX_SIZE="$(wc -c < "$LIBSTDCXX_TMP" | tr -d \' \')"\n'
+        'echo "STAGE_LIBSTDCXX_SHA=$LIBSTDCXX_SHA"\n'
+        'echo "STAGE_LIBSTDCXX_SIZE=$LIBSTDCXX_SIZE"\n'
+        f'if [ "$LIBSTDCXX_SHA" = "{HOST_LIBSTDCXX_SHA256}" ] && [ "$LIBSTDCXX_SIZE" = "{HOST_LIBSTDCXX_SIZE}" ]; then\n'
+        f'mv "$LIBSTDCXX_TMP" "{STAGED_LIBSTDCXX}"\n'
+        "else\n"
+        'rm -f "$LIBSTDCXX_TMP"\n'
+        "fi\n"
+        "fi\n"
+        'rm -f "$LIBSTDCXX_B64" "$LIBSTDCXX_TMP"\n'
+        "fi\n"
+        f'if [ ! -e "{TARGET_LIBGCC}" ] && [ ! -e "{STAGED_LIBGCC}" ]; then\n'
+        f'LIBGCC_B64="{STAGED_LIBGCC}.b64"\n'
+        f'LIBGCC_TMP="{STAGED_LIBGCC}.tmp"\n'
+        f'rm -f "$LIBGCC_B64" "$LIBGCC_TMP"\n'
+        f"{_build_base64_heredoc_commands(HOST_LIBGCC_B64, '$LIBGCC_B64', 'SHARCBRIDGE_LIBGCC_B64')}"
+        'if base64 -d "$LIBGCC_B64" > "$LIBGCC_TMP"; then\n'
+        f'LIBGCC_SHA="$(sha256sum "$LIBGCC_TMP" | awk \'{{print $1}}\')"\n'
+        f'LIBGCC_SIZE="$(wc -c < "$LIBGCC_TMP" | tr -d \' \')"\n'
+        'echo "STAGE_LIBGCC_SHA=$LIBGCC_SHA"\n'
+        'echo "STAGE_LIBGCC_SIZE=$LIBGCC_SIZE"\n'
+        f'if [ "$LIBGCC_SHA" = "{HOST_LIBGCC_SHA256}" ] && [ "$LIBGCC_SIZE" = "{HOST_LIBGCC_SIZE}" ]; then\n'
+        f'mv "$LIBGCC_TMP" "{STAGED_LIBGCC}"\n'
+        "else\n"
+        'rm -f "$LIBGCC_TMP"\n'
+        "fi\n"
+        "fi\n"
+        'rm -f "$LIBGCC_B64" "$LIBGCC_TMP"\n'
+        "fi\n"
         f'if [ -x "{TARGET_RUNTIME_BIN}" ] || [ -x "{STAGED_RUNTIME_BIN}" ]; then echo STAGE_RUNTIME_READY=1; else echo STAGE_RUNTIME_READY=0; fi\n'
         f'if [ -e "{TARGET_BASE_CONFIG}" ] || [ -e "{STAGED_BASE_CONFIG}" ]; then echo STAGE_CONFIG_READY=1; else echo STAGE_CONFIG_READY=0; fi\n'
+        f'if [ -e "{TARGET_LIBSTDCXX}" ] || [ -e "{STAGED_LIBSTDCXX}" ]; then echo STAGE_LIBSTDCXX_READY=1; else echo STAGE_LIBSTDCXX_READY=0; fi\n'
+        f'if [ -e "{TARGET_LIBGCC}" ] || [ -e "{STAGED_LIBGCC}" ]; then echo STAGE_LIBGCC_READY=1; else echo STAGE_LIBGCC_READY=0; fi\n'
         "stty echo 2>/dev/null || true\n"
         f"echo {end_marker}\n"
     )

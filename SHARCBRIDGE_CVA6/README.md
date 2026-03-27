@@ -36,9 +36,24 @@ El comando principal para Figure 5 debe ser simple:
 Defaults operativos esperados:
 
 - `CVA6_RUNTIME_MODE=spike_persistent`
-- `CVA6_SDK_DIR=/tmp/cva6-sdk-clean-20260324-r1-2` si existe
-- `CVA6_SKIP_BUILD=1` cuando se usa ese SDK bueno
+- `CVA6_SDK_DIR=/home/jminiesta/Repositorios/SHARC_RISCV/CVA6_LINUX/cva6-sdk`
+- `CVA6_SKIP_BUILD=1` cuando `cva6-sdk` ya contiene payload, runtime y config
 - `Spike` resuelto automaticamente
+- el flujo rechaza por defecto un `install64/` no validado
+
+## Guardas de robustez
+
+- La unica raiz operativa por defecto es `CVA6_LINUX/cva6-sdk`.
+- El triplete de arranque validado vive en:
+  - `CVA6_LINUX/cva6-sdk/install64/spike_fw_payload.elf`
+  - `CVA6_LINUX/cva6-sdk/install64/vmlinux`
+  - `CVA6_LINUX/cva6-sdk/install64/Image`
+- `run_cva6_figure5_tcp.sh` y el launcher rechazan por defecto un triplete distinto.
+- Si se quiere probar deliberadamente otro triplete:
+  - `CVA6_ALLOW_UNVERIFIED_TRIPLET=1`
+- `cva6_image_builder.sh` ya no reconstruye `install64/` por defecto.
+- Si se quiere reconstruir de forma deliberada el triplete de boot:
+  - `CVA6_REBUILD_BOOT_TRIPLET=1 bash ./cva6_image_builder.sh`
 
 Outputs esperados:
 
