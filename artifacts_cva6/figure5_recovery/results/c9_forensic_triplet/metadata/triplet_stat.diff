@@ -1,9 +1,0 @@
---- /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/good_stat.txt	2026-03-24 12:38:13.779055473 +0100
-+++ /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/regenerated_stat.txt	2026-03-24 12:40:49.993326935 +0100
-@@ -1,3 +1,3 @@
--/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/vmlinux|15636784|2026-03-24 12:38:13.313050885 +0100
--/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/Image|19592192|2026-03-24 12:38:13.330051052 +0100
--/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/spike_fw_payload.elf|20555528|2026-03-24 12:38:13.374051486 +0100
-+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/vmlinux|16791856|2026-03-24 12:40:49.255322054 +0100
-+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/Image|19592192|2026-03-24 12:40:49.275322186 +0100
-+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/spike_fw_payload.elf|20555528|2026-03-24 12:40:49.300322352 +0100

@@ -1,9 +1,0 @@
---- /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/good_file.txt	2026-03-24 12:38:13.801055689 +0100
-+++ /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/metadata/regenerated_file.txt	2026-03-24 12:40:50.023327133 +0100
-@@ -1,3 +1,3 @@
--/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/vmlinux: ELF 64-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), statically linked, BuildID[sha1]=94a8643a0f61ae72a30682b6c680ab6281db8d0e, not stripped
--/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/Image: PE32+ executable (EFI application) RISC-V 64-bit (stripped to external PDB), for MS Windows, 2 sections
--/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/spike_fw_payload.elf: ELF 64-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), static-pie linked, with debug_info, not stripped
-+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/vmlinux: ELF 64-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), statically linked, BuildID[sha1]=9821dc5f76f646ae908f8bff42f33c6ed41f51a8, not stripped
-+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/Image: PE32+ executable (EFI application) RISC-V 64-bit (stripped to external PDB), for MS Windows, 2 sections
-+/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/spike_fw_payload.elf: ELF 64-bit LSB executable, UCB RISC-V, RVC, soft-float ABI, version 1 (SYSV), static-pie linked, with debug_info, not stripped

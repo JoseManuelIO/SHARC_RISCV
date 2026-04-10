@@ -1,1 +1,0 @@
-c0eb9ac6bcc5ea7c8b054361bcbb885c7e8b77cf73fa5c2dd3fbd99b5a26746b  /home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current/rootfs.cpio

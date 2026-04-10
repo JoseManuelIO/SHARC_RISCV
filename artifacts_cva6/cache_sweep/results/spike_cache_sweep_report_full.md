@@ -1,12 +1,17 @@
-# Spike Cache Sweep Report
+# Spike Cache Sweep Summary
 
-| case | mode | cycles_mean | instret_mean | cpi_mean | ipc_mean | delay_mean_ms | feasible_ratio | cache args |
-|---|---|---:|---:|---:|---:|---:|---:|---|
-| Baseline (no cachesim) | baseline | 15864104.656 | 15864104.656 | 1.000000 | 1.000000 | 575.200 | 1.000 | `` |
-| Baseline (no cachesim) | cva6 | 17217301.016 | 17217301.016 | 1.000000 | 1.000000 | 1352.267 | 1.000 | `` |
-| 1 MB | baseline | 15860308.469 | 15860308.469 | 1.000000 | 1.000000 | 4498.080 | 1.000 | `--ic=128:4:64 --dc=128:4:64 --l2=4096:4:64` |
-| 1 MB | cva6 | 17214796.656 | 17214796.656 | 1.000000 | 1.000000 | 8554.065 | 1.000 | `--ic=128:4:64 --dc=128:4:64 --l2=4096:4:64` |
-| 262 KB | baseline | 15860775.688 | 15860775.688 | 1.000000 | 1.000000 | 4882.194 | 1.000 | `--ic=32:4:64 --dc=32:4:64 --l2=1024:4:64` |
-| 262 KB | cva6 | 17214801.203 | 17214801.203 | 1.000000 | 1.000000 | 9621.276 | 1.000 | `--ic=32:4:64 --dc=32:4:64 --l2=1024:4:64` |
-| 32 KB | baseline | 15860649.828 | 15860649.828 | 1.000000 | 1.000000 | 5261.417 | 1.000 | `--ic=4:4:64 --dc=4:4:64 --l2=128:4:64` |
-| 32 KB | cva6 | 17214778.969 | 17214778.969 | 1.000000 | 1.000000 | 10368.604 | 1.000 | `--ic=4:4:64 --dc=4:4:64 --l2=128:4:64` |
+Este enlace se conserva para compatibilidad con la documentacion de presentacion.
+
+## Resumen vigente
+
+- barrido validado: `baseline`, `1 MB`, `262 KB`, `32 KB`
+- fuente de verdad:
+  - [cache_sweep_manifest.json](/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/cache_sweep/results/cache_sweep_manifest.json)
+- bundle publicado:
+  - [experiment_list_data_incremental.json](/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/cache_sweep/latest/experiment_list_data_incremental.json)
+- figura publicada:
+  - [plot_cache.png](/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/cache_sweep/latest/plot_cache.png)
+
+## Alcance
+
+El desglose historico detallado por etapas se elimino durante la limpieza. Este archivo queda como puntero estable al estado limpio y actualmente reproducible del barrido de caches.

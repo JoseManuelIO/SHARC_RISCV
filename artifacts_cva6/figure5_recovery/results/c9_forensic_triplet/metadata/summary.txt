@@ -1,5 +1,0 @@
-good_reference_rootfs_current_hash=b2909bd8113fa045ab3a9db0a99372d68172190c691424ef496b96299580c15d
-c9 forensic triplet compare complete
-build_log=/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/logs/c9_forensic_triplet_rebuild.log
-good_dir=/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference
-regenerated_dir=/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/regenerated_current

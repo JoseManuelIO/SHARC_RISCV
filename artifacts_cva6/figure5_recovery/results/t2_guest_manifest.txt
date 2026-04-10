@@ -1,7 +1,0 @@
-cachetest.elf
-lib/ld-linux-riscv64-lp64d.so.1
-tetris
-usr/bin/hello_riscv
-usr/bin/sharc_cva6_acc_runtime
-usr/share/sharcbridge_cva6
-usr/share/sharcbridge_cva6/base_config.json

@@ -1,3 +1,0 @@
-/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/vmlinux|15636784|2026-03-24 12:38:13.313050885 +0100
-/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/Image|19592192|2026-03-24 12:38:13.330051052 +0100
-/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/figure5_recovery/results/c9_forensic_triplet/good_reference/spike_fw_payload.elf|20555528|2026-03-24 12:38:13.374051486 +0100

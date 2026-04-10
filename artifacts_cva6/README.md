@@ -2,6 +2,13 @@
 
 Esta carpeta es exclusivamente para artefactos de tareas del plan SHARC-CVA6.
 
+## Estado recomendado
+
+- resumen ejecutivo actual:
+  - [MAINLINE_STATUS.md](/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/MAINLINE_STATUS.md)
+- flujo operativo de caches:
+  - [cache_sweep/README.md](/home/jminiesta/Repositorios/SHARC_RISCV/artifacts_cva6/cache_sweep/README.md)
+
 ## Aqui debe ir
 
 - logs

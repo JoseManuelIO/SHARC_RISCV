@@ -1,5 +1,0 @@
-/tmp/sharc_cva6_figure5/2026-03-18--10-38-18-cva6_figure5
-/tmp/sharc_cva6_figure5/2026-03-18--10-38-18-cva6_figure5/latest/plots.png
-/tmp/sharc_cva6_figure5/2026-03-18--10-38-18-cva6_figure5/latest/experiment_list_data_incremental.json
-/tmp/sharc_cva6_figure5/2026-03-18--10-38-18-cva6_figure5/2026-03-18--02-38-20--cva6-figure5/cva6-real-delays/simulation_data_incremental.json
-/tmp/sharc_cva6_figure5/2026-03-18--10-38-18-cva6_figure5/2026-03-18--02-38-20--cva6-figure5/baseline-no-delay-onestep/simulation_data_incremental.json
